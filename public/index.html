@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>تسجيل لاعب – TKD_2026</title>
+<meta name="theme-color" content="#0a0a0a">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🥋%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/app.css">
+</head><body><div class="wrap">
+<div class="head"><div><h1>TKD_2026 🥋</h1><small>TAEKWONDO TEAM • REGISTRATION</small></div></div>
+<form class="card" id="form" novalidate>
+<h2>تسجيل لاعب جديد</h2><p class="muted">املأ معلوماتك وابعثها. المدرب يتوصل بيها على طول.</p>
+<div class="row2">
+<div class="field" data-field="firstName"><label for="firstName">الاسم *</label><input id="firstName" name="firstName" maxlength="40" autocomplete="given-name"><small class="err"></small></div>
+<div class="field" data-field="lastName"><label for="lastName">اللقب *</label><input id="lastName" name="lastName" maxlength="40" autocomplete="family-name"><small class="err"></small></div>
+</div>
+<div class="field" data-field="region"><label for="region">الولاية *</label><select id="region" name="region"><option value="">اختار ولايتك</option><option value="Tunis">تونس</option><option value="Ariana">أريانة</option><option value="Ben Arous">بن عروس</option><option value="Manouba">منوبة</option><option value="Nabeul">نابل</option><option value="Zaghouan">زغوان</option><option value="Bizerte">بنزرت</option><option value="Béja">باجة</option><option value="Jendouba">جندوبة</option><option value="Le Kef">الكاف</option><option value="Siliana">سليانة</option><option value="Sousse">سوسة</option><option value="Monastir">المنستير</option><option value="Mahdia">المهدية</option><option value="Sfax">صفاقس</option><option value="Kairouan">القيروان</option><option value="Kasserine">القصرين</option><option value="Sidi Bouzid">سيدي بوزيد</option><option value="Gabès">قابس</option><option value="Médenine">مدنين</option><option value="Tataouine">تطاوين</option><option value="Gafsa">قفصة</option><option value="Tozeur">توزر</option><option value="Kébili">قبلي</option></select><small class="err"></small></div>
+<div class="row2">
+<div class="field" data-field="belt"><label for="belt">الحزام *</label><select id="belt" name="belt"><option value="">اختار</option><option value="White">أبيض</option><option value="Yellow">أصفر</option><option value="Orange">برتقالي</option><option value="Green">أخضر</option><option value="Blue">أزرق</option><option value="Red">أحمر</option><option value="Black Poom">أسود بوم</option><option value="Black 1st Dan">أسود دان 1</option><option value="Black 2nd Dan">أسود دان 2</option><option value="Black 3rd Dan">أسود دان 3</option><option value="Black 4th Dan">أسود دان 4</option><option value="Black 5th Dan+">أسود دان 5+</option></select><small class="err"></small></div>
+<div class="field" data-field="weight"><label for="weight">الوزن (kg) *</label><input id="weight" name="weight" type="number" inputmode="decimal" min="10" max="200" step="0.1" placeholder="مثال: 55"><small class="err"></small></div>
+</div>
+<fieldset class="field" data-field="specialty"><legend>الاختصاص *</legend><div class="seg"><label><input type="radio" name="specialty" value="Kyorugi"><span>قتال<small>Kyorugi</small></span></label><label><input type="radio" name="specialty" value="Poomsae"><span>فورمات<small>Poomsae</small></span></label><label><input type="radio" name="specialty" value="Freestyle"><span>فري ستايل<small>Freestyle</small></span></label></div><small class="err"></small></fieldset>
+<fieldset class="field" data-field="category"><legend>الفئة *</legend><div class="seg"><label><input type="radio" name="category" value="Cadet"><span>كاديت<small>Cadet</small></span></label><label><input type="radio" name="category" value="Junior"><span>جونيور<small>Junior</small></span></label><label><input type="radio" name="category" value="Senior"><span>سينيور<small>Senior</small></span></label></div><small class="err"></small></fieldset>
+<div class="field" data-field="phone"><label for="phone">رقم الهاتف *</label><input id="phone" name="phone" type="tel" inputmode="tel" dir="ltr" autocomplete="tel" placeholder="22 123 456"><small class="err"></small></div>
+<div class="trap" aria-hidden="true"><label>Website <input name="website" tabindex="-1" autocomplete="off"></label></div>
+<div class="field" data-field="consent"><label class="chk"><input type="checkbox" name="consent"><span>أوافق على إرسال هذه المعلومات للمدرب لغرض التسجيل الرياضي.</span></label><small class="err"></small></div>
+<button class="btn" type="submit">إرسال التسجيل</button>
+<p id="status" role="alert"></p>
+</form>
+<div class="card" id="done" hidden><h2 id="doneTitle"></h2><p class="muted">وصلت معلوماتك للمدرب. ما عندك شيء آخر تعمله.</p></div>
+</div><script src="/register.js"></script></body></html>

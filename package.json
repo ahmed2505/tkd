@@ -1,0 +1,17 @@
+{
+  "name": "taekwondo-app",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Taekwondo team app: public athlete registration + coach dashboard + Excel export (Node, Express, MongoDB)",
+  "main": "server.js",
+  "scripts": { "start": "node server.js", "dev": "node --watch server.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.0",
+    "express-rate-limit": "^7.4.0",
+    "helmet": "^8.0.0",
+    "mongoose": "^8.7.0"
+  }
+}
