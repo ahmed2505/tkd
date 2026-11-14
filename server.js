@@ -8,7 +8,7 @@ const mongoose = require('mongoose');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const ExcelJS = require('exceljs');
-const { REGIONS, BELTS, SPECIALTIES, CATEGORIES } = require('./options');
+const { GENDERS, REGIONS, BELTS, SPECIALTIES, CATEGORIES } = require('./options');
 
 const vals = (l) => l.map((x) => x[0]);
 const lab = (l, v) => { const x = l.find((y) => y[0] === v); return x ? `${x[1]} (${x[0]})` : (v || ''); };
@@ -27,15 +27,28 @@ const TYPES = { ky: 'قتال (Kyorugi)', po: 'فورمات (Poomsae)' };
 const nameField = (l) => ({ type: String, required: [true, `اكتب ${l}.`], trim: true, maxlength: [40, 'طويل برشا (40 حرف كحد أقصى).'], match: [NAME_RE, 'حروف فقط من فضلك.'] });
 const choice = (list, l) => ({ type: String, required: [true, `اختار ${l}.`], enum: { values: vals(list), message: `اختار ${l} من القائمة.` } });
 
+const Coach = mongoose.model('Coach', new mongoose.Schema({
+  name: { type: String, required: true, trim: true, maxlength: 60 },
+  username: { type: String, required: true, unique: true, lowercase: true, trim: true, match: /^[a-z0-9._-]{3,30}$/ },
+  slug: { type: String, required: true, unique: true }, // public registration link: /?c=<slug>
+  phone: { type: String }, // optional, only used for the WhatsApp button
+  passwordHash: { type: String, select: false },
+  pwv: { type: Number, default: 0 }, // bump to log the coach out everywhere
+  active: { type: Boolean, default: true }
+}, { timestamps: true }));
+
 const Athlete = mongoose.model('Athlete', new mongoose.Schema({
   firstName: nameField('الاسم'),
   lastName: nameField('اللقب'),
   region: choice(REGIONS, 'الولاية'),
   belt: choice(BELTS, 'الحزام'),
   weight: { type: Number, required: [true, 'اكتب الوزن بالكيلوغرام.'], min: [10, 'الوزن لازم يكون 10 كغ على الأقل.'], max: [200, 'الوزن لازم يكون 200 كغ كحد أقصى.'] },
+  gender: { type: String, enum: vals(GENDERS) },
+  dob: { type: String, match: /^\d{4}-\d{2}-\d{2}$/ }, // date of birth, YYYY-MM-DD
   specialty: choice(SPECIALTIES, 'الاختصاص'),
   category: choice(CATEGORIES, 'الفئة'),
   phone: { type: String, required: [true, 'اكتب رقم الهاتف.'], unique: true },
+  coach: { type: mongoose.Schema.Types.ObjectId, ref: 'Coach', index: true }, // empty only for athletes registered before multi-coach
   source: { type: String, enum: ['link', 'coach'], default: 'link' },
   passwordHash: { type: String, select: false },
   pwv: { type: Number, default: 0 } // bump to log the athlete out everywhere
@@ -82,19 +95,33 @@ function sendErr(err, res, next) {
   }
   next(err);
 }
-async function createAthlete(b, source) {
+function parseGenderDob(b, required) {
+  const errors = {};
+  const gender = String(b.gender || '');
+  if (gender ? !vals(GENDERS).includes(gender) : required) errors.gender = 'اختار الجنس.';
+  const dob = String(b.dob || '');
+  if (dob) {
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(dob) ? new Date(`${dob}T00:00:00Z`) : null;
+    const age = d ? (Date.now() - d.getTime()) / 31557600000 : NaN;
+    if (!d || d.toISOString().slice(0, 10) !== dob || !(age >= 3 && age <= 90)) errors.dob = 'تاريخ الميلاد غير صحيح.';
+  } else if (required) errors.dob = 'اكتب تاريخ الميلاد.';
+  if (Object.keys(errors).length) throw new Bad(errors);
+  return { gender, dob };
+}
+async function createAthlete(b, source, coachId) {
   const phone = normalizePhone(b.phone);
   if (!phone) throw new Bad({ phone: 'اكتب رقم تونسي صحيح (8 أرقام).' });
   const weight = Number(b.weight);
   if (!Number.isFinite(weight)) throw new Bad({ weight: 'اكتب الوزن بالكيلوغرام.' });
+  const gd = parseGenderDob(b, true);
   // explicit whitelist: no mass-assignment
   const password = genPw();
-  const doc = await Athlete.create({ firstName: b.firstName, lastName: b.lastName, region: b.region, belt: b.belt, weight, specialty: b.specialty, category: b.category, phone, source, passwordHash: await hashPw(password) });
+  const doc = await Athlete.create({ firstName: b.firstName, lastName: b.lastName, region: b.region, belt: b.belt, weight, gender: gd.gender, dob: gd.dob, specialty: b.specialty, category: b.category, phone, source, coach: coachId, passwordHash: await hashPw(password) });
   return { doc, password };
 }
 
 // shapes expected by the coach dashboard
-const outAthlete = (a) => ({ id: String(a._id), name: `${a.firstName} ${a.lastName}`, firstName: a.firstName, lastName: a.lastName, region: a.region, belt: a.belt, weight: a.weight, spec: a.specialty, cat: a.category, phone: a.phone, source: a.source || 'link', hasPw: Boolean(a.passwordHash), ts: new Date(a.createdAt).getTime() });
+const outAthlete = (a, cn) => ({ id: String(a._id), coach: a.coach ? String(a.coach) : '', coachName: cn ? (cn.get(String(a.coach)) || '') : '', gender: a.gender || '', dob: a.dob || '', name: `${a.firstName} ${a.lastName}`, firstName: a.firstName, lastName: a.lastName, region: a.region, belt: a.belt, weight: a.weight, spec: a.specialty, cat: a.category, phone: a.phone, source: a.source || 'link', hasPw: Boolean(a.passwordHash), ts: new Date(a.createdAt).getTime() });
 const outEval = (e) => ({ id: String(e._id), ts: new Date(e.createdAt).getTime(), pid: String(e.athlete), date: e.date, stage: e.stage, type: e.type, sc: e.scores, total: e.total, st: e.strengths, im: e.improve, goal: e.goal, nt: e.notes, by: e.by });
 
 // ---------- coach auth: signed, HttpOnly cookie ----------
@@ -112,13 +139,38 @@ function cookie(req, name) {
   const c = (req.headers.cookie || '').split(';').map((s) => s.trim()).find((s) => s.startsWith(`${name}=`));
   return c ? decodeURIComponent(c.slice(name.length + 1)) : '';
 }
-function isAdmin(req, allowQuery) {
+const okId = (id) => mongoose.isValidObjectId(id);
+// Who is calling? owner = ADMIN_KEY (manages coaches), coach = own account (sees only his athletes)
+async function staffOf(req, allowQuery) {
   const t = validToken(cookie(req, 'tkd_admin'));
-  if (t && t.r === 'coach') return true;
+  if (t && t.r === 'owner') return { owner: true };
+  if (t && t.r === 'coach' && okId(t.id)) {
+    const c = await Coach.findById(t.id).select('+passwordHash');
+    if (c && c.active && (c.pwv || 0) === t.v) return { owner: false, coach: c };
+    return null;
+  }
   const key = process.env.ADMIN_KEY;
-  return Boolean(key) && safeEq(req.get('x-admin-key') || (allowQuery ? req.query.key : '') || '', key);
+  if (key && safeEq(req.get('x-admin-key') || (allowQuery ? req.query.key : '') || '', key)) return { owner: true };
+  return null;
 }
-const requireAdmin = (req, res, next) => (isAdmin(req) ? next() : res.status(401).json({ message: 'انتهت الجلسة، ادخل من جديد.' }));
+async function requireStaff(req, res, next) {
+  try {
+    const st = await staffOf(req);
+    if (!st) return res.status(401).json({ message: 'انتهت الجلسة، ادخل من جديد.' });
+    req.staff = st;
+    req.scope = st.owner ? {} : { coach: st.coach._id }; // every athlete query is filtered with this
+    next();
+  } catch (err) { next(err); }
+}
+const requireOwner = (req, res, next) => (req.staff && req.staff.owner ? next() : res.status(403).json({ message: 'هذه العملية للمسؤول فقط.' }));
+const coachNames = async () => new Map((await Coach.find().select('name').lean()).map((c) => [String(c._id), c.name]));
+const namesFor = (req) => (req.staff.owner ? coachNames() : null);
+async function coachList() {
+  const [cs, counts] = await Promise.all([Coach.find().sort({ createdAt: 1 }).lean(), Athlete.aggregate([{ $group: { _id: '$coach', n: { $sum: 1 } } }])]);
+  const m = new Map(counts.map((x) => [String(x._id), x.n]));
+  return { list: cs.map((c) => ({ id: String(c._id), name: c.name, username: c.username, slug: c.slug, active: c.active, n: m.get(String(c._id)) || 0 })), unassigned: m.get('null') || 0 };
+}
+const setStaffCookie = (req, res, payload) => res.cookie('tkd_admin', makeToken(payload, 30), { httpOnly: true, sameSite: 'strict', secure: req.secure, maxAge: 30 * 864e5, path: '/' });
 
 // ---------- app ----------
 const app = express();
@@ -141,45 +193,95 @@ app.post('/api/athletes', submitLimiter, async (req, res, next) => {
     const b = req.body || {};
     if (b.website) return res.status(201).json({ ok: true }); // honeypot
     if (b.consent !== true) throw new Bad({ consent: 'لازم توافق على إرسال المعلومات.' });
-    const { password } = await createAthlete(b, 'link');
+    const coach = /^[\w-]{6,20}$/.test(String(b.coach || '')) ? await Coach.findOne({ slug: b.coach, active: true }) : null;
+    if (!coach) throw new Bad({ coach: 'رابط التسجيل غير صالح. اطلب رابطًا جديدًا من مدربك.' });
+    const { password } = await createAthlete(b, 'link', coach._id);
     res.status(201).json({ ok: true, password }); // shown once to the athlete on the thank-you screen
   } catch (err) { sendErr(err, res, next); }
 });
 
+// public: name of the coach behind a registration link (shown on the form)
+app.get('/api/coach/:slug', submitLimiter, async (req, res, next) => {
+  try {
+    const c = /^[\w-]{6,20}$/.test(req.params.slug) ? await Coach.findOne({ slug: req.params.slug, active: true }).select('name').lean() : null;
+    if (!c) return res.status(404).json({ message: 'رابط غير صالح.' });
+    res.json({ name: c.name });
+  } catch (err) { next(err); }
+});
+
 // coach: session
-app.post('/api/admin/login', loginLimiter, (req, res) => {
-  const key = process.env.ADMIN_KEY;
-  if (!key || !safeEq((req.body || {}).key || '', key)) return res.status(401).json({ message: 'المفتاح غير صحيح.' });
-  res.cookie('tkd_admin', makeToken({ r: 'coach' }, 30), { httpOnly: true, sameSite: 'strict', secure: req.secure, maxAge: 30 * 864e5, path: '/' });
-  res.json({ ok: true });
+app.post('/api/admin/login', loginLimiter, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const username = String(b.username || '').trim().toLowerCase();
+    const pw = String(b.password ?? b.key ?? '');
+    const bad = () => res.status(401).json({ message: 'اسم المستخدم أو كلمة السر غير صحيحة.' });
+    if (username === 'admin' || !username) { // owner: username "admin" + ADMIN_KEY
+      const key = process.env.ADMIN_KEY;
+      if (!key || !safeEq(pw, key)) return bad();
+      setStaffCookie(req, res, { r: 'owner' });
+      return res.json({ ok: true });
+    }
+    const c = await Coach.findOne({ username }).select('+passwordHash');
+    let ok = false;
+    if (c && c.active && c.passwordHash) ok = await checkPw(pw, c.passwordHash);
+    else await scrypt('x', DUMMY_SALT, 32); // same timing whether or not the account exists
+    if (!ok) return bad();
+    setStaffCookie(req, res, { r: 'coach', id: String(c._id), v: c.pwv || 0 });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
 });
 app.post('/api/admin/logout', (_req, res) => { res.clearCookie('tkd_admin', { path: '/' }); res.json({ ok: true }); });
 
 // coach: data
 app.use('/api/admin', adminLimiter);
-app.get('/api/admin/data', requireAdmin, async (_req, res, next) => {
+app.get('/api/admin/data', requireStaff, async (req, res, next) => {
   try {
-    const [a, e] = await Promise.all([Athlete.find().select('+passwordHash').sort({ createdAt: -1 }).lean(), Evaluation.find().sort({ createdAt: -1 }).lean()]);
-    res.json({ athletes: a.map(outAthlete), evaluations: e.map(outEval) });
+    const athletes = await Athlete.find(req.scope).select('+passwordHash').sort({ createdAt: -1 }).lean();
+    const evals = await Evaluation.find(req.staff.owner ? {} : { athlete: { $in: athletes.map((a) => a._id) } }).sort({ createdAt: -1 }).lean();
+    const out = { athletes: [], evaluations: evals.map(outEval) };
+    if (req.staff.owner) {
+      const cl = await coachList();
+      const cn = new Map(cl.list.map((c) => [c.id, c.name]));
+      out.athletes = athletes.map((a) => outAthlete(a, cn));
+      out.me = { role: 'owner', name: 'المسؤول', username: 'admin' };
+      out.coaches = cl.list; out.unassigned = cl.unassigned;
+    } else {
+      out.athletes = athletes.map((a) => outAthlete(a));
+      const c = req.staff.coach;
+      out.me = { role: 'coach', name: c.name, username: c.username, slug: c.slug };
+    }
+    res.json(out);
   } catch (err) { next(err); }
 });
-app.post('/api/admin/athletes', requireAdmin, async (req, res, next) => {
-  try { const { doc, password } = await createAthlete(req.body || {}, 'coach'); res.status(201).json({ ...outAthlete(doc.toObject()), password }); } catch (err) { sendErr(err, res, next); }
-});
-app.delete('/api/admin/athletes/:id', requireAdmin, async (req, res, next) => {
+app.post('/api/admin/athletes', requireStaff, async (req, res, next) => {
   try {
-    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'معرّف غير صحيح.' });
-    await Evaluation.deleteMany({ athlete: req.params.id });
-    await Athlete.findByIdAndDelete(req.params.id);
+    const b = req.body || {};
+    let coachId = req.staff.owner ? null : req.staff.coach._id;
+    if (req.staff.owner) { // the owner must say which coach the athlete belongs to
+      if (!okId(b.coach) || !(await Coach.exists({ _id: b.coach }))) throw new Bad({ coach: 'اختار المدرب.' });
+      coachId = b.coach;
+    }
+    const { doc, password } = await createAthlete(b, 'coach', coachId);
+    res.status(201).json({ ...outAthlete(doc.toObject(), await namesFor(req)), password });
+  } catch (err) { sendErr(err, res, next); }
+});
+app.delete('/api/admin/athletes/:id', requireStaff, async (req, res, next) => {
+  try {
+    if (!okId(req.params.id)) return res.status(400).json({ message: 'معرّف غير صحيح.' });
+    const a = await Athlete.findOne({ _id: req.params.id, ...req.scope }).select('_id');
+    if (!a) return res.status(404).json({ message: 'اللاعب غير موجود.' });
+    await Evaluation.deleteMany({ athlete: a._id });
+    await Athlete.deleteOne({ _id: a._id });
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
-app.post('/api/admin/evaluations', requireAdmin, async (req, res, next) => {
+app.post('/api/admin/evaluations', requireStaff, async (req, res, next) => {
   try {
     const b = req.body || {};
     const crit = CRIT[b.type];
     if (!crit) throw new Bad({ type: 'نوع التقييم غير صحيح.' });
-    if (!mongoose.isValidObjectId(b.pid) || !(await Athlete.exists({ _id: b.pid }))) throw new Bad({ pid: 'اللاعب غير موجود.' });
+    if (!mongoose.isValidObjectId(b.pid) || !(await Athlete.exists({ _id: b.pid, ...req.scope }))) throw new Bad({ pid: 'اللاعب غير موجود.' });
     const sc = Array.isArray(b.sc) ? b.sc.map(Number) : [];
     if (sc.length !== crit.length || sc.some((v, i) => !Number.isInteger(v) || v < 0 || v > crit[i][1])) throw new Bad({ sc: 'النقاط غير صحيحة.' });
     const s = (v) => String(v ?? '');
@@ -187,53 +289,58 @@ app.post('/api/admin/evaluations', requireAdmin, async (req, res, next) => {
     res.status(201).json(outEval(e.toObject()));
   } catch (err) { sendErr(err, res, next); }
 });
-app.delete('/api/admin/evaluations/:id', requireAdmin, async (req, res, next) => {
+app.delete('/api/admin/evaluations/:id', requireStaff, async (req, res, next) => {
   try {
-    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'معرّف غير صحيح.' });
-    await Evaluation.findByIdAndDelete(req.params.id);
+    if (!okId(req.params.id)) return res.status(400).json({ message: 'معرّف غير صحيح.' });
+    const e = await Evaluation.findById(req.params.id).select('athlete');
+    if (!e || !(await Athlete.exists({ _id: e.athlete, ...req.scope }))) return res.status(404).json({ message: 'التقييم غير موجود.' });
+    await Evaluation.deleteOne({ _id: e._id });
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
 
 // coach: edit athlete, reset passwords, edit evaluation
-const okId = (id) => mongoose.isValidObjectId(id);
-app.put('/api/admin/athletes/:id', requireAdmin, async (req, res, next) => {
+app.put('/api/admin/athletes/:id', requireStaff, async (req, res, next) => {
   try {
     if (!okId(req.params.id)) return res.status(400).json({ message: 'معرّف غير صحيح.' });
-    const a = await Athlete.findById(req.params.id).select('+passwordHash');
+    const a = await Athlete.findOne({ _id: req.params.id, ...req.scope }).select('+passwordHash');
     if (!a) return res.status(404).json({ message: 'اللاعب غير موجود.' });
     const b = req.body || {};
     const phone = normalizePhone(b.phone);
     if (!phone) throw new Bad({ phone: 'اكتب رقم تونسي صحيح (8 أرقام).' });
     const weight = Number(b.weight);
     if (!Number.isFinite(weight)) throw new Bad({ weight: 'اكتب الوزن بالكيلوغرام.' });
+    const gd = parseGenderDob(b, Boolean(a.gender || a.dob));
+    if (gd.gender) a.gender = gd.gender;
+    if (gd.dob) a.dob = gd.dob;
     a.set({ firstName: b.firstName, lastName: b.lastName, region: b.region, belt: b.belt, weight, specialty: b.specialty, category: b.category, phone });
+    if (req.staff.owner && okId(b.coach) && (await Coach.exists({ _id: b.coach }))) a.coach = b.coach; // only the owner can move an athlete to another coach
     await a.save();
-    res.json(outAthlete(a.toObject()));
+    res.json(outAthlete(a.toObject(), await namesFor(req)));
   } catch (err) { sendErr(err, res, next); }
 });
 async function newPassword(a) { const password = genPw(); a.passwordHash = await hashPw(password); a.pwv = (a.pwv || 0) + 1; await a.save(); return { id: String(a._id), name: `${a.firstName} ${a.lastName}`, phone: a.phone, password }; }
-app.post('/api/admin/athletes/passwords', requireAdmin, async (_req, res, next) => { // only athletes that have no password yet
+app.post('/api/admin/athletes/passwords', requireStaff, async (req, res, next) => { // only athletes that have no password yet
   try {
-    const missing = await Athlete.find({ $or: [{ passwordHash: { $exists: false } }, { passwordHash: null }, { passwordHash: '' }] }).select('+passwordHash');
+    const missing = await Athlete.find({ ...req.scope, $or: [{ passwordHash: { $exists: false } }, { passwordHash: null }, { passwordHash: '' }] }).select('+passwordHash');
     const list = [];
     for (const a of missing) list.push(await newPassword(a));
     res.json({ list });
   } catch (err) { next(err); }
 });
-app.post('/api/admin/athletes/:id/password', requireAdmin, async (req, res, next) => {
+app.post('/api/admin/athletes/:id/password', requireStaff, async (req, res, next) => {
   try {
     if (!okId(req.params.id)) return res.status(400).json({ message: 'معرّف غير صحيح.' });
-    const a = await Athlete.findById(req.params.id).select('+passwordHash');
+    const a = await Athlete.findOne({ _id: req.params.id, ...req.scope }).select('+passwordHash');
     if (!a) return res.status(404).json({ message: 'اللاعب غير موجود.' });
     res.json(await newPassword(a));
   } catch (err) { next(err); }
 });
-app.put('/api/admin/evaluations/:id', requireAdmin, async (req, res, next) => {
+app.put('/api/admin/evaluations/:id', requireStaff, async (req, res, next) => {
   try {
     if (!okId(req.params.id)) return res.status(400).json({ message: 'معرّف غير صحيح.' });
     const e = await Evaluation.findById(req.params.id);
-    if (!e) return res.status(404).json({ message: 'التقييم غير موجود.' });
+    if (!e || !(await Athlete.exists({ _id: e.athlete, ...req.scope }))) return res.status(404).json({ message: 'التقييم غير موجود.' });
     const b = req.body || {};
     const crit = CRIT[e.type].slice(0, e.scores.length); // an old 7-criteria evaluation stays 7
     const sc = Array.isArray(b.sc) ? b.sc.map(Number) : [];
@@ -248,11 +355,11 @@ app.put('/api/admin/evaluations/:id', requireAdmin, async (req, res, next) => {
 // coach: Excel (always generated live from MongoDB). Works with the login cookie, or ?key= / x-admin-key.
 app.get('/admin/export.xlsx', adminLimiter, async (req, res, next) => {
   try {
-    if (!isAdmin(req, true)) return res.status(401).send('Unauthorized');
-    const [athletes, evals] = await Promise.all([
-      Athlete.find().sort({ category: 1, specialty: 1, weight: 1 }).lean(),
-      Evaluation.find().sort({ date: -1 }).lean()
-    ]);
+    const st = await staffOf(req, true);
+    if (!st) return res.status(401).send('Unauthorized');
+    const athletes = await Athlete.find(st.owner ? {} : { coach: st.coach._id }).sort({ category: 1, specialty: 1, weight: 1 }).lean();
+    const evals = await Evaluation.find(st.owner ? {} : { athlete: { $in: athletes.map((a) => a._id) } }).sort({ date: -1 }).lean();
+    const cn = st.owner ? await coachNames() : null;
     const names = new Map(athletes.map((a) => [String(a._id), `${a.firstName} ${a.lastName}`]));
     const wb = new ExcelJS.Workbook();
     const sheet = (title, cols) => {
@@ -264,8 +371,10 @@ app.get('/admin/export.xlsx', adminLimiter, async (req, res, next) => {
       ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
       return ws;
     };
-    const wa = sheet('اللاعبون', [['الاسم (First name)', 'firstName', 18], ['اللقب (Last name)', 'lastName', 18], ['الولاية (Region)', 'region', 22], ['الحزام (Belt)', 'belt', 24], ['الوزن kg (Weight)', 'weight', 14], ['الاختصاص (Specialty)', 'specialty', 20], ['الفئة (Category)', 'category', 18], ['الهاتف (Phone)', 'phone', 16], ['المصدر (Source)', 'source', 14], ['تاريخ التسجيل (Registered)', 'createdAt', 22]]);
-    athletes.forEach((a) => wa.addRow({ ...a, region: lab(REGIONS, a.region), belt: lab(BELTS, a.belt), specialty: lab(SPECIALTIES, a.specialty), category: lab(CATEGORIES, a.category), source: a.source === 'coach' ? 'المدرب' : 'الرابط' }));
+    const aCols = [['الاسم (First name)', 'firstName', 18], ['اللقب (Last name)', 'lastName', 18], ['الولاية (Region)', 'region', 22], ['الحزام (Belt)', 'belt', 24], ['الوزن kg (Weight)', 'weight', 14], ['الاختصاص (Specialty)', 'specialty', 20], ['الفئة (Category)', 'category', 18], ['الجنس (Gender)', 'gender', 12], ['تاريخ الميلاد (Date of birth)', 'dob', 16], ['الهاتف (Phone)', 'phone', 16], ['المصدر (Source)', 'source', 14], ['تاريخ التسجيل (Registered)', 'createdAt', 22]];
+    if (st.owner) aCols.push(['المدرب (Coach)', 'coachName', 18]);
+    const wa = sheet('اللاعبون', aCols);
+    athletes.forEach((a) => wa.addRow({ ...a, coachName: cn ? (cn.get(String(a.coach)) || 'بلا مدرب') : '', region: lab(REGIONS, a.region), belt: lab(BELTS, a.belt), specialty: lab(SPECIALTIES, a.specialty), category: lab(CATEGORIES, a.category), gender: lab(GENDERS, a.gender), source: a.source === 'coach' ? 'المدرب' : 'الرابط' }));
     wa.getColumn('createdAt').numFmt = 'dd/mm/yyyy hh:mm';
     const we = sheet('التقييمات', [['اللاعب', 'who', 22], ['التاريخ', 'date', 12], ['المرحلة', 'stage', 20], ['النوع', 'type', 18], ['المجموع', 'total', 10], ['من', 'max', 8], ['التفاصيل', 'detail', 60], ['نقاط القوة', 'strengths', 30], ['نقاط التحسين', 'improve', 30], ['الهدف القادم', 'goal', 30], ['ملاحظات', 'notes', 30], ['أجراه', 'by', 10]]);
     evals.forEach((e) => we.addRow({ ...e, max: (CRIT[e.type] || []).slice(0, e.scores.length).reduce((a, c) => a + c[1], 0), who: names.get(String(e.athlete)) || '(محذوف)', stage: STAGES[e.stage], type: TYPES[e.type], detail: (CRIT[e.type] || []).slice(0, e.scores.length).map((c, i) => `${c[0]}: ${e.scores[i]}/${c[1]}`).join(' | ') }));
@@ -274,6 +383,74 @@ app.get('/admin/export.xlsx', adminLimiter, async (req, res, next) => {
     res.setHeader('Content-Disposition', `attachment; filename="tkd-${new Date().toISOString().slice(0, 10)}.xlsx"`);
     await wb.xlsx.write(res);
     res.end();
+  } catch (err) { next(err); }
+});
+
+// ---- owner only: manage coach accounts ----
+const newCoachPw = async (c) => { const password = genPw(); c.passwordHash = await hashPw(password); c.pwv = (c.pwv || 0) + 1; await c.save(); return { id: String(c._id), name: c.name, username: c.username, slug: c.slug, phone: c.phone || '', password }; };
+app.post('/api/admin/coaches', requireStaff, requireOwner, async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const name = String(b.name || '').trim();
+    const username = String(b.username || '').trim().toLowerCase();
+    if (!name || name.length > 60) throw new Bad({ name: 'اكتب اسم المدرب.' });
+    if (!/^[a-z0-9._-]{3,30}$/.test(username) || username === 'admin') throw new Bad({ username: 'اسم المستخدم: من 3 إلى 30 حرف إنجليزي صغير أو أرقام أو . _ -' });
+    const phoneRaw = String(b.phone || '').trim();
+    const phone = phoneRaw ? normalizePhone(phoneRaw) : '';
+    if (phoneRaw && !phone) throw new Bad({ phone: 'اكتب رقم تونسي صحيح (8 أرقام) أو اتركه فارغًا.' });
+    const password = genPw();
+    const c = await Coach.create({ name, username, phone, slug: crypto.randomBytes(6).toString('base64url'), passwordHash: await hashPw(password) });
+    res.status(201).json({ id: String(c._id), name: c.name, username: c.username, slug: c.slug, phone, password }); // password shown once
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ errors: { username: 'اسم المستخدم مستعمل من قبل.' } });
+    sendErr(err, res, next);
+  }
+});
+app.post('/api/admin/coaches/:id/password', requireStaff, requireOwner, async (req, res, next) => {
+  try {
+    const c = okId(req.params.id) ? await Coach.findById(req.params.id).select('+passwordHash') : null;
+    if (!c) return res.status(404).json({ message: 'المدرب غير موجود.' });
+    res.json(await newCoachPw(c));
+  } catch (err) { next(err); }
+});
+app.put('/api/admin/coaches/:id', requireStaff, requireOwner, async (req, res, next) => {
+  try {
+    const c = okId(req.params.id) ? await Coach.findById(req.params.id) : null;
+    if (!c) return res.status(404).json({ message: 'المدرب غير موجود.' });
+    c.active = Boolean((req.body || {}).active);
+    c.pwv = (c.pwv || 0) + 1; // logs him out right away
+    await c.save();
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+app.delete('/api/admin/coaches/:id', requireStaff, requireOwner, async (req, res, next) => {
+  try {
+    const c = okId(req.params.id) ? await Coach.findById(req.params.id).select('_id') : null;
+    if (!c) return res.status(404).json({ message: 'المدرب غير موجود.' });
+    if (await Athlete.exists({ coach: c._id })) return res.status(400).json({ message: 'عند هذا المدرب لاعبون. انقلهم لمدرب آخر أولًا، أو استعمل «إيقاف».' });
+    await Coach.deleteOne({ _id: c._id });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+// owner: give every athlete that has no coach yet (registered before multi-coach) to one coach
+app.post('/api/admin/coaches/:id/claim', requireStaff, requireOwner, async (req, res, next) => {
+  try {
+    const c = okId(req.params.id) ? await Coach.findById(req.params.id).select('_id') : null;
+    if (!c) return res.status(404).json({ message: 'المدرب غير موجود.' });
+    const r = await Athlete.updateMany({ $or: [{ coach: { $exists: false } }, { coach: null }] }, { $set: { coach: c._id } });
+    res.json({ moved: r.modifiedCount });
+  } catch (err) { next(err); }
+});
+// coach: change own password
+app.post('/api/admin/me/password', submitLimiter, requireStaff, async (req, res, next) => {
+  try {
+    if (req.staff.owner) return res.status(400).json({ message: 'مفتاح المسؤول يتغيّر من ملف .env.' });
+    const b = req.body || {}, c = req.staff.coach, n = String(b.next || '').trim();
+    if (!(await checkPw(b.current, c.passwordHash))) return res.status(400).json({ message: 'كلمة السر الحالية غير صحيحة.' });
+    if (n.length < 6 || n.length > 64) return res.status(400).json({ message: 'كلمة السر الجديدة لازم تكون من 6 إلى 64 حرف.' });
+    c.passwordHash = await hashPw(n); c.pwv = (c.pwv || 0) + 1; await c.save();
+    setStaffCookie(req, res, { r: 'coach', id: String(c._id), v: c.pwv });
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 
@@ -308,9 +485,10 @@ app.post('/api/athlete/logout', (_req, res) => { res.clearCookie('tkd_athlete', 
 app.get('/api/athlete/me', requireAthlete, async (req, res, next) => {
   try {
     const a = req.athlete;
+    const coach = a.coach ? await Coach.findById(a.coach).select('name').lean() : null;
     const evs = await Evaluation.find({ athlete: a._id }).sort({ date: -1, createdAt: -1 }).lean();
     res.json({
-      athlete: { firstName: a.firstName, region: ar(REGIONS, a.region), belt: ar(BELTS, a.belt), weight: a.weight, specialty: ar(SPECIALTIES, a.specialty), category: ar(CATEGORIES, a.category) },
+      athlete: { coach: coach ? coach.name : '', firstName: a.firstName, region: ar(REGIONS, a.region), belt: ar(BELTS, a.belt), weight: a.weight, specialty: ar(SPECIALTIES, a.specialty), category: ar(CATEGORIES, a.category) },
       // the coach's private notes are never sent to the athlete
       evaluations: evs.map((e) => {
         const crit = CRIT[e.type].slice(0, e.scores.length);
