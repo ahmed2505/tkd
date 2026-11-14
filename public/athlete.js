@@ -24,7 +24,7 @@
   function dash() {
     var a = data.athlete, ev = data.evaluations;
     var h = '<div class="head"><div><h1>أهلا ' + esc(a.firstName) + ' 🥋</h1><small>TKD_2026 • ATHLETE</small></div><button class="pill" id="out">خروج</button></div>';
-    h += '<div class="card">' + tag(a.category) + tag(a.weight + ' kg') + tag(a.belt) + tag(a.specialty) + tag(a.region) + '</div>';
+    h += '<div class="card">' + tag(a.category) + tag(a.weight + ' kg') + tag(a.belt) + tag(a.specialty) + tag(a.region) + (a.coach ? '<p class="muted" style="margin:10px 0 0">مدربك: <b>' + esc(a.coach) + '</b></p>' : '') + '</div>';
     if (!ev.length) return h + '<div class="card"><h2>تقييماتك</h2><p class="muted">ما فماش تقييم بعد. باش يظهرلك هنا على طول بعد ما يسجّلو المدرب.</p></div>' + pwCard();
     h += '<div class="total"><div class="muted">آخر تقييم: ' + fmt(ev[0].date) + '</div><big>' + ev[0].pct + '%</big><div class="muted">' + ev[0].total + '/' + ev[0].max + '</div></div>';
     ['ky', 'po'].forEach(function (t) {

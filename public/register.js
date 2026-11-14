@@ -2,6 +2,14 @@
   var form = document.getElementById('form');
   var btn = form.querySelector('button.btn');
   var statusEl = document.getElementById('status');
+  var slug = new URLSearchParams(location.search).get('c') || '';
+  // the link belongs to one coach: show his name, or block the form if the link is wrong
+  form.hidden = true;
+  fetch('/api/coach/' + encodeURIComponent(slug))
+    .then(function (res) { if (!res.ok) throw new Error('bad'); return res.json(); })
+    .then(function (c) { document.getElementById('coachLine').textContent = 'التسجيل مع المدرب: ' + c.name + '. املأ معلوماتك وابعثها.'; form.hidden = false; })
+    .catch(function () { document.getElementById('bad').hidden = false; });
+  document.getElementById('dob').max = new Date().toISOString().slice(0, 10);
   var PHONE_RE = /^(?:\+216|00216)?[2-9]\d{7}$/;
 
   function setErr(name, msg) {
@@ -18,6 +26,9 @@
     var e = {}, w = Number(d.weight);
     if (!d.firstName) e.firstName = 'اكتب اسمك.';
     if (!d.lastName) e.lastName = 'اكتب لقبك.';
+    if (!d.gender) e.gender = 'اختار الجنس.';
+    if (!d.dob) e.dob = 'اكتب تاريخ ميلادك.';
+    else { var age = (Date.now() - new Date(d.dob + 'T00:00:00Z').getTime()) / 31557600000; if (!(age >= 3 && age <= 90)) e.dob = 'تاريخ الميلاد غير صحيح.'; }
     if (!d.region) e.region = 'اختار ولايتك.';
     if (!d.belt) e.belt = 'اختار الحزام.';
     if (!d.weight || isNaN(w) || w < 10 || w > 200) e.weight = 'اكتب وزنك بالكيلوغرام (من 10 إلى 200).';
@@ -34,6 +45,7 @@
     var data = {};
     new FormData(form).forEach(function (v, k) { data[k] = typeof v === 'string' ? v.trim() : v; });
     data.consent = form.elements.consent.checked;
+    data.coach = slug;
 
     var errors = validate(data);
     var keys = Object.keys(errors);
@@ -58,6 +70,7 @@
           return;
         }
         if (r.body.errors) Object.keys(r.body.errors).forEach(function (k) { setErr(k, r.body.errors[k]); });
+        if (r.body.errors && r.body.errors.coach) statusEl.textContent = r.body.errors.coach;
         else statusEl.textContent = r.body.message || 'صار مشكل، عاود المحاولة.';
       })
       .catch(function () { statusEl.textContent = 'ما فماش اتصال. تأكد من الإنترنت وعاود.'; })

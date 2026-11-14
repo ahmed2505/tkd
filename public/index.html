@@ -8,11 +8,13 @@
 </head><body><div class="wrap">
 <div class="head"><div><h1>TKD_2026 🥋</h1><small>TAEKWONDO TEAM • REGISTRATION</small></div></div>
 <form class="card" id="form" novalidate>
-<h2>تسجيل لاعب جديد</h2><p class="muted">املأ معلوماتك وابعثها. المدرب يتوصل بيها على طول.</p>
+<h2>تسجيل لاعب جديد</h2><p class="muted" id="coachLine">املأ معلوماتك وابعثها. المدرب يتوصل بيها على طول.</p>
 <div class="row2">
 <div class="field" data-field="firstName"><label for="firstName">الاسم *</label><input id="firstName" name="firstName" maxlength="40" autocomplete="given-name"><small class="err"></small></div>
 <div class="field" data-field="lastName"><label for="lastName">اللقب *</label><input id="lastName" name="lastName" maxlength="40" autocomplete="family-name"><small class="err"></small></div>
 </div>
+<fieldset class="field" data-field="gender"><legend>الجنس *</legend><div class="seg"><label><input type="radio" name="gender" value="Male"><span>ذكر<small>Male</small></span></label><label><input type="radio" name="gender" value="Female"><span>أنثى<small>Female</small></span></label></div><small class="err"></small></fieldset>
+<div class="field" data-field="dob"><label for="dob">تاريخ الميلاد *</label><input id="dob" name="dob" type="date" autocomplete="bday"><small class="err"></small></div>
 <div class="field" data-field="region"><label for="region">الولاية *</label><select id="region" name="region"><option value="">اختار ولايتك</option><option value="Tunis">تونس</option><option value="Ariana">أريانة</option><option value="Ben Arous">بن عروس</option><option value="Manouba">منوبة</option><option value="Nabeul">نابل</option><option value="Zaghouan">زغوان</option><option value="Bizerte">بنزرت</option><option value="Béja">باجة</option><option value="Jendouba">جندوبة</option><option value="Le Kef">الكاف</option><option value="Siliana">سليانة</option><option value="Sousse">سوسة</option><option value="Monastir">المنستير</option><option value="Mahdia">المهدية</option><option value="Sfax">صفاقس</option><option value="Kairouan">القيروان</option><option value="Kasserine">القصرين</option><option value="Sidi Bouzid">سيدي بوزيد</option><option value="Gabès">قابس</option><option value="Médenine">مدنين</option><option value="Tataouine">تطاوين</option><option value="Gafsa">قفصة</option><option value="Tozeur">توزر</option><option value="Kébili">قبلي</option></select><small class="err"></small></div>
 <div class="row2">
 <div class="field" data-field="belt"><label for="belt">الحزام *</label><select id="belt" name="belt"><option value="">اختار</option><option value="White">أبيض</option><option value="Yellow">أصفر</option><option value="Orange">برتقالي</option><option value="Green">أخضر</option><option value="Blue">أزرق</option><option value="Red">أحمر</option><option value="Black Poom">أسود بوم</option><option value="Black 1st Dan">أسود دان 1</option><option value="Black 2nd Dan">أسود دان 2</option><option value="Black 3rd Dan">أسود دان 3</option><option value="Black 4th Dan">أسود دان 4</option><option value="Black 5th Dan+">أسود دان 5+</option></select><small class="err"></small></div>
@@ -26,5 +28,6 @@
 <button class="btn" type="submit">إرسال التسجيل</button>
 <p id="status" role="alert"></p>
 </form>
+<div class="card" id="bad" hidden><h2>رابط التسجيل غير صالح</h2><p class="muted">اطلب من مدربك رابط التسجيل الخاص به.</p></div>
 <div class="card" id="done" hidden><h2 id="doneTitle"></h2><p class="muted">وصلت معلوماتك للمدرب. هذه كلمة السر متاعك باش تشوف تقييماتك بعد ما يسجّلها المدرب. صوّرها أو احفظها الآن، تظهر مرة وحدة.</p><p id="donePw" class="link" style="font-size:30px;font-weight:800;letter-spacing:3px;margin:12px 0"></p><p class="muted">الدخول برقم هاتفك + كلمة السر.</p><a class="btn" href="/athlete">دخول لمتابعة تقييماتي</a></div>
 </div><script src="/register.js"></script></body></html>
