@@ -52,6 +52,7 @@
         if (r.ok) {
           form.hidden = true;
           document.getElementById('doneTitle').textContent = 'تم تسجيلك ✓ يا ' + data.firstName;
+          document.getElementById('donePw').textContent = r.body.password || '';
           document.getElementById('done').hidden = false;
           window.scrollTo(0, 0);
           return;
