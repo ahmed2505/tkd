@@ -21,7 +21,7 @@
 <div class="field" data-field="weight"><label for="weight">الوزن (kg) *</label><input id="weight" name="weight" type="number" inputmode="decimal" min="10" max="200" step="0.1" placeholder="مثال: 55"><small class="err"></small></div>
 </div>
 <fieldset class="field" data-field="specialty"><legend>الاختصاص *</legend><div class="seg"><label><input type="radio" name="specialty" value="Kyorugi"><span>قتال<small>Kyorugi</small></span></label><label><input type="radio" name="specialty" value="Poomsae"><span>فورمات<small>Poomsae</small></span></label><label><input type="radio" name="specialty" value="Freestyle"><span>فري ستايل<small>Freestyle</small></span></label></div><small class="err"></small></fieldset>
-<fieldset class="field" data-field="category"><legend>الفئة *</legend><div class="seg"><label><input type="radio" name="category" value="Cadet"><span>كاديت<small>Cadet</small></span></label><label><input type="radio" name="category" value="Junior"><span>جونيور<small>Junior</small></span></label><label><input type="radio" name="category" value="Senior"><span>سينيور<small>Senior</small></span></label></div><small class="err"></small></fieldset>
+<div class="field" data-field="category"><label for="catOut">الفئة (تتحدّد آليًا من تاريخ الميلاد)</label><output id="catOut" class="catbadge" for="dob" aria-live="polite">اكتب تاريخ ميلادك</output><small class="err"></small></div>
 <div class="field" data-field="phone"><label for="phone">رقم الهاتف *</label><input id="phone" name="phone" type="tel" inputmode="tel" dir="ltr" autocomplete="tel" placeholder="22 123 456"><small class="err"></small></div>
 <div class="trap" aria-hidden="true"><label>Website <input name="website" tabindex="-1" autocomplete="off"></label></div>
 <div class="field" data-field="consent"><label class="chk"><input type="checkbox" name="consent"><span>أوافق على إرسال هذه المعلومات للمدرب لغرض التسجيل الرياضي.</span></label><small class="err"></small></div>
@@ -29,5 +29,5 @@
 <p id="status" role="alert"></p>
 </form>
 <div class="card" id="bad" hidden><h2>رابط التسجيل غير صالح</h2><p class="muted">اطلب من مدربك رابط التسجيل الخاص به.</p></div>
-<div class="card" id="done" hidden><h2 id="doneTitle"></h2><p class="muted">وصلت معلوماتك للمدرب. هذه كلمة السر متاعك باش تشوف تقييماتك بعد ما يسجّلها المدرب. صوّرها أو احفظها الآن، تظهر مرة وحدة.</p><p id="donePw" class="link" style="font-size:30px;font-weight:800;letter-spacing:3px;margin:12px 0"></p><p class="muted">الدخول برقم هاتفك + كلمة السر.</p><a class="btn" href="/athlete">دخول لمتابعة تقييماتي</a></div>
-</div><script src="/register.js"></script></body></html>
+<div class="card" id="done" hidden><h2 id="doneTitle"></h2><p class="muted">وصل طلبك للمدرب وهو الآن <b>في انتظار موافقته</b>. ما تتسجّلش في قائمة اللاعبين إلا بعد ما يقبل. هذه كلمة السر متاعك، تخدم بعد القبول. صوّرها أو احفظها الآن، تظهر مرة وحدة.</p><p id="donePw" class="link" style="font-size:30px;font-weight:800;letter-spacing:3px;margin:12px 0"></p><p class="muted">الدخول برقم هاتفك + كلمة السر.</p><a class="btn sec" href="/athlete">صفحة اللاعب (تخدم بعد قبول المدرب)</a></div>
+</div><script src="/age-category.js"></script><script src="/register.js"></script></body></html>

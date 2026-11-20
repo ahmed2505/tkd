@@ -12,16 +12,12 @@ const { GENDERS, REGIONS, BELTS, SPECIALTIES, CATEGORIES } = require('./options'
 
 const vals = (l) => l.map((x) => x[0]);
 const lab = (l, v) => { const x = l.find((y) => y[0] === v); return x ? `${x[1]} (${x[0]})` : (v || ''); };
+const N = require('./public/notes'); // single source of truth for the 5 note fields (labels, limits, legacy fallbacks, visibility)
+const C = require('./public/criteria'); // single source of truth for the 5 categories / 20 metrics (also served to the browser)
+const AGE = require('./public/age-category'); // single source of truth for DOB -> age -> category (also served to the browser)
 const NAME_RE = /^[\p{L}][\p{L}\p{M}\s'’-]*$/u;
 
-const CRIT = {
-  ky: [['الهجوم', 20], ['الهجوم المضاد', 20], ['الدفاع', 10], ['التوقيت والمسافة', 15], ['السرعة ورد الفعل', 15], ['التكتيك واتخاذ القرار', 10], ['التحكم في المباراة', 10]],
-  po: [['دقة التقنيات', 20], ['الثبات والوقفات', 20], ['التوازن', 10], ['القوة والسرعة', 15], ['الإيقاع والتوقيت', 15], ['التركيز والتعبير', 10], ['الانضباط والكيهاب', 10]]
-};
-CRIT.ky.push(['القوة', 20]); // power: new criterion, 0/20 (new evaluations are /120; older ones stay /100)
-CRIT.po.push(['القوة', 20]);
 const STAGES = { initial: 'التقييم الأولي', mid: 'تقييم منتصف الموسم', final: 'التقييم النهائي' };
-const TYPES = { ky: 'قتال (Kyorugi)', po: 'فورمات (Poomsae)' };
 
 // ---------- models ----------
 const nameField = (l) => ({ type: String, required: [true, `اكتب ${l}.`], trim: true, maxlength: [40, 'طويل برشا (40 حرف كحد أقصى).'], match: [NAME_RE, 'حروف فقط من فضلك.'] });
@@ -37,7 +33,9 @@ const Coach = mongoose.model('Coach', new mongoose.Schema({
   active: { type: Boolean, default: true }
 }, { timestamps: true }));
 
-const Athlete = mongoose.model('Athlete', new mongoose.Schema({
+// Fields shared by an approved athlete and by a pending registration request (one definition, no drift).
+// `category` is NEVER taken from the client: it is derived from `dob` by AGE.assess() in buildProfile().
+const profileFields = () => ({
   firstName: nameField('الاسم'),
   lastName: nameField('اللقب'),
   region: choice(REGIONS, 'الولاية'),
@@ -46,7 +44,11 @@ const Athlete = mongoose.model('Athlete', new mongoose.Schema({
   gender: { type: String, enum: vals(GENDERS) },
   dob: { type: String, match: /^\d{4}-\d{2}-\d{2}$/ }, // date of birth, YYYY-MM-DD
   specialty: choice(SPECIALTIES, 'الاختصاص'),
-  category: choice(CATEGORIES, 'الفئة'),
+  category: choice(CATEGORIES, 'الفئة') // Kids | Cadet | Junior | Senior (snapshot; reads recompute it from dob, see categoryOf)
+});
+
+const Athlete = mongoose.model('Athlete', new mongoose.Schema({
+  ...profileFields(),
   phone: { type: String, required: [true, 'اكتب رقم الهاتف.'], unique: true },
   coach: { type: mongoose.Schema.Types.ObjectId, ref: 'Coach', index: true }, // empty only for athletes registered before multi-coach
   source: { type: String, enum: ['link', 'coach'], default: 'link' },
@@ -54,17 +56,49 @@ const Athlete = mongoose.model('Athlete', new mongoose.Schema({
   pwv: { type: Number, default: 0 } // bump to log the athlete out everywhere
 }, { timestamps: true }));
 
+// Coach Approval Gate: a registration made through the public link lands HERE, not in `athletes`.
+// It becomes an Athlete only when the coach clicks Accept (see POST /api/admin/registrations/:id/accept).
+// Denied/approved requests are kept as a small audit trail (the password hash is dropped as soon as it is decided).
+const registrationSchema = new mongoose.Schema({
+  ...profileFields(),
+  phone: { type: String, required: [true, 'اكتب رقم الهاتف.'] },
+  coach: { type: mongoose.Schema.Types.ObjectId, ref: 'Coach', required: true, index: true },
+  status: { type: String, enum: ['pending', 'approved', 'denied'], default: 'pending', index: true },
+  passwordHash: { type: String, select: false }, // generated at submission (shown once to the athlete), copied to the Athlete on approval
+  athlete: { type: mongoose.Schema.Types.ObjectId, ref: 'Athlete' }, // set when approved
+  reviewedAt: { type: Date },
+  reviewedBy: { type: String, maxlength: 60 },
+  reason: { type: String, maxlength: 200 } // optional note when denied
+}, { timestamps: true });
+// One open request per phone number (a denied one may be re-submitted). Also closes the double-submit race.
+registrationSchema.index({ phone: 1 }, { unique: true, partialFilterExpression: { status: 'pending' } });
+const Registration = mongoose.model('Registration', registrationSchema);
+
 const text = { type: String, maxlength: 1000, default: '', trim: true };
 const Evaluation = mongoose.model('Evaluation', new mongoose.Schema({
   athlete: { type: mongoose.Schema.Types.ObjectId, ref: 'Athlete', required: true, index: true },
   date: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
   stage: { type: String, enum: Object.keys(STAGES), required: true },
-  type: { type: String, enum: Object.keys(TYPES), required: true },
-  scores: { type: [Number], required: true },
-  total: { type: Number, required: true, min: 0, max: 120 },
-  strengths: text, improve: text, goal: text, notes: text,
+  v: { type: Number, enum: [1, 2], default: 1 },                          // 1 = legacy criteria, 2 = mode-based metric model
+  mode: { type: String, enum: C.MODE_IDS, required: function () { return this.v === 2; } }, // v2 only: 'kyorugi' | 'freestyle'. v2 docs saved before Freestyle have none = kyorugi. No default on purpose (it would stamp legacy docs on save)
+  ratings: { type: mongoose.Schema.Types.Mixed },                          // v2: { metricId: integer 0..SCALE.max }
+  type: { type: String, enum: Object.keys(C.LEGACY_TYPES) },               // v1 only
+  scores: { type: [Number], default: undefined },                          // v1 only
+  total: { type: Number, required: true, min: 0, max: C.MAX_SCORE },
+  max: { type: Number },
+  ...Object.fromEntries(N.FIELDS.map((f) => [f.key, text])),             // strengths, develop, goal, recommendations, notes
+  improve: { type: String },                                               // DEPRECATED (pre-5-fields "skills to develop"): read via N.fromDoc, unset on the next edit
   by: { type: String, enum: ['المدرب', 'المساعد'], default: 'المدرب' }
 }, { timestamps: true }));
+
+// Mongo filter for one evaluation mode ('' = all). Returns null for an unknown mode.
+// Docs saved before Freestyle have no `mode`: v2 ones are kyorugi, v1 ones follow their legacy `type`.
+function modeFilter(mode) {
+  if (mode == null || mode === '') return {};
+  if (mode === 'kyorugi') return { $or: [{ mode: 'kyorugi' }, { mode: null, type: { $ne: 'po' } }] };
+  if (mode === 'poomsae') return { mode: null, type: 'po' };
+  return C.MODE_IDS.includes(mode) ? { mode } : null;
+}
 
 class Bad extends Error { constructor(errors) { super('bad'); this.errors = errors; this.bad = true; } }
 
@@ -95,34 +129,61 @@ function sendErr(err, res, next) {
   }
   next(err);
 }
+// gender + DOB + the category DERIVED from the DOB. The client's `category` is ignored everywhere.
+// `required` false = legacy athletes that never had a DOB (see PUT /api/admin/athletes/:id): empty DOB is allowed there.
 function parseGenderDob(b, required) {
   const errors = {};
   const gender = String(b.gender || '');
   if (gender ? !vals(GENDERS).includes(gender) : required) errors.gender = 'اختار الجنس.';
-  const dob = String(b.dob || '');
+  const dob = String(b.dob || '').trim();
+  let category = '', age = NaN;
   if (dob) {
-    const d = /^\d{4}-\d{2}-\d{2}$/.test(dob) ? new Date(`${dob}T00:00:00Z`) : null;
-    const age = d ? (Date.now() - d.getTime()) / 31557600000 : NaN;
-    if (!d || d.toISOString().slice(0, 10) !== dob || !(age >= 3 && age <= 90)) errors.dob = 'تاريخ الميلاد غير صحيح.';
+    const a = AGE.assess(dob);
+    if (!a.ok) errors.dob = a.message; else { category = a.category; age = a.age; }
   } else if (required) errors.dob = 'اكتب تاريخ الميلاد.';
   if (Object.keys(errors).length) throw new Bad(errors);
-  return { gender, dob };
+  return { gender, dob, category, age };
 }
-async function createAthlete(b, source, coachId) {
+// Category to SHOW: recomputed from the DOB (so a Cadet turning 15 becomes Junior without a migration);
+// athletes without a DOB (registered before v4.1) keep their stored category.
+const categoryOf = (a) => { const r = a.dob ? AGE.assess(a.dob) : null; return r && r.ok ? r.category : (a.category || ''); };
+
+// Validate + whitelist everything an athlete may submit. Used by BOTH the pending registration and the coach's direct add.
+function buildProfile(b) {
   const phone = normalizePhone(b.phone);
   if (!phone) throw new Bad({ phone: 'اكتب رقم تونسي صحيح (8 أرقام).' });
   const weight = Number(b.weight);
   if (!Number.isFinite(weight)) throw new Bad({ weight: 'اكتب الوزن بالكيلوغرام.' });
   const gd = parseGenderDob(b, true);
-  // explicit whitelist: no mass-assignment
+  // explicit whitelist: no mass-assignment. category comes from gd (server-computed), never from b.category.
+  return { firstName: b.firstName, lastName: b.lastName, region: b.region, belt: b.belt, weight, gender: gd.gender, dob: gd.dob, specialty: b.specialty, category: gd.category, phone };
+}
+async function createAthlete(b, source, coachId) {
+  const profile = buildProfile(b);
   const password = genPw();
-  const doc = await Athlete.create({ firstName: b.firstName, lastName: b.lastName, region: b.region, belt: b.belt, weight, gender: gd.gender, dob: gd.dob, specialty: b.specialty, category: b.category, phone, source, coach: coachId, passwordHash: await hashPw(password) });
+  const doc = await Athlete.create({ ...profile, source, coach: coachId, passwordHash: await hashPw(password) });
+  return { doc, password };
+}
+// Coach Approval Gate, step 1: store the request only. Nothing is added to the active roster yet.
+async function createPendingRegistration(b, coachId) {
+  const profile = buildProfile(b);
+  if (await Athlete.exists({ phone: profile.phone })) throw new Bad({ phone: 'هذا الرقم مسجّل من قبل. إذا نسيت كلمة السر اطلبها من المدرب.' });
+  if (await Registration.exists({ phone: profile.phone, status: 'pending' })) throw new Bad({ phone: 'طلبك وصل للمدرب وهو في انتظار الموافقة.' });
+  const password = genPw();
+  const doc = await Registration.create({ ...profile, coach: coachId, status: 'pending', passwordHash: await hashPw(password) });
   return { doc, password };
 }
 
 // shapes expected by the coach dashboard
-const outAthlete = (a, cn) => ({ id: String(a._id), coach: a.coach ? String(a.coach) : '', coachName: cn ? (cn.get(String(a.coach)) || '') : '', gender: a.gender || '', dob: a.dob || '', name: `${a.firstName} ${a.lastName}`, firstName: a.firstName, lastName: a.lastName, region: a.region, belt: a.belt, weight: a.weight, spec: a.specialty, cat: a.category, phone: a.phone, source: a.source || 'link', hasPw: Boolean(a.passwordHash), ts: new Date(a.createdAt).getTime() });
-const outEval = (e) => ({ id: String(e._id), ts: new Date(e.createdAt).getTime(), pid: String(e.athlete), date: e.date, stage: e.stage, type: e.type, sc: e.scores, total: e.total, st: e.strengths, im: e.improve, goal: e.goal, nt: e.notes, by: e.by });
+const outAthlete = (a, cn) => ({ id: String(a._id), coach: a.coach ? String(a.coach) : '', coachName: cn ? (cn.get(String(a.coach)) || '') : '', gender: a.gender || '', dob: a.dob || '', name: `${a.firstName} ${a.lastName}`, firstName: a.firstName, lastName: a.lastName, region: a.region, belt: a.belt, weight: a.weight, spec: a.specialty, cat: categoryOf(a), phone: a.phone, source: a.source || 'link', hasPw: Boolean(a.passwordHash), ts: new Date(a.createdAt).getTime() });
+// shape of one pending request for the coach pop-up (never includes the password hash)
+const outReg = (r, cn) => { const a = AGE.assess(r.dob); return { id: String(r._id), coach: String(r.coach), coachName: cn ? (cn.get(String(r.coach)) || '') : '', name: `${r.firstName} ${r.lastName}`, firstName: r.firstName, lastName: r.lastName, gender: r.gender || '', dob: r.dob || '', age: a.ok ? a.age : null, cat: categoryOf(r), region: r.region, belt: r.belt, weight: r.weight, spec: r.specialty, phone: r.phone, ts: new Date(r.createdAt).getTime() }; };
+async function pendingFor(req) { // newest last, so the coach reviews in arrival order
+  const list = await Registration.find({ status: 'pending', ...req.scope }).sort({ createdAt: 1 }).lean();
+  const cn = req.staff.owner ? await coachNames() : null;
+  return list.map((r) => outReg(r, cn));
+}
+const outEval = (e) => ({ id: String(e._id), ts: new Date(e.createdAt).getTime(), pid: String(e.athlete), date: e.date, stage: e.stage, v: e.v || 1, mode: C.modeOf(e), r: e.ratings || null, type: e.type || '', sc: e.scores || null, total: e.total, max: e.max || null, ...N.toApi(N.fromDoc(e)), by: e.by }); // coach shape: all 5 fields
 
 // ---------- coach auth: signed, HttpOnly cookie ----------
 const secret = () => process.env.SESSION_SECRET || process.env.ADMIN_KEY || '';
@@ -195,8 +256,9 @@ app.post('/api/athletes', submitLimiter, async (req, res, next) => {
     if (b.consent !== true) throw new Bad({ consent: 'لازم توافق على إرسال المعلومات.' });
     const coach = /^[\w-]{6,20}$/.test(String(b.coach || '')) ? await Coach.findOne({ slug: b.coach, active: true }) : null;
     if (!coach) throw new Bad({ coach: 'رابط التسجيل غير صالح. اطلب رابطًا جديدًا من مدربك.' });
-    const { password } = await createAthlete(b, 'link', coach._id);
-    res.status(201).json({ ok: true, password }); // shown once to the athlete on the thank-you screen
+    // Approval gate: this only stores a PENDING request. The athlete joins the roster when the coach accepts.
+    const { password } = await createPendingRegistration(b, coach._id);
+    res.status(201).json({ ok: true, pending: true, password }); // password shown once; it starts working when the coach accepts
   } catch (err) { sendErr(err, res, next); }
 });
 
@@ -238,8 +300,10 @@ app.use('/api/admin', adminLimiter);
 app.get('/api/admin/data', requireStaff, async (req, res, next) => {
   try {
     const athletes = await Athlete.find(req.scope).select('+passwordHash').sort({ createdAt: -1 }).lean();
-    const evals = await Evaluation.find(req.staff.owner ? {} : { athlete: { $in: athletes.map((a) => a._id) } }).sort({ createdAt: -1 }).lean();
-    const out = { athletes: [], evaluations: evals.map(outEval) };
+    const mf = modeFilter(req.query.mode); // optional ?mode=kyorugi|freestyle|poomsae
+    if (!mf) return res.status(400).json({ message: 'نوع التقييم غير صحيح.' });
+    const evals = await Evaluation.find({ ...(req.staff.owner ? {} : { athlete: { $in: athletes.map((a) => a._id) } }), ...mf }).sort({ createdAt: -1 }).lean();
+    const out = { athletes: [], evaluations: evals.map(outEval), pending: await pendingFor(req) };
     if (req.staff.owner) {
       const cl = await coachList();
       const cn = new Map(cl.list.map((c) => [c.id, c.name]));
@@ -279,13 +343,16 @@ app.delete('/api/admin/athletes/:id', requireStaff, async (req, res, next) => {
 app.post('/api/admin/evaluations', requireStaff, async (req, res, next) => {
   try {
     const b = req.body || {};
-    const crit = CRIT[b.type];
-    if (!crit) throw new Bad({ type: 'نوع التقييم غير صحيح.' });
     if (!mongoose.isValidObjectId(b.pid) || !(await Athlete.exists({ _id: b.pid, ...req.scope }))) throw new Bad({ pid: 'اللاعب غير موجود.' });
-    const sc = Array.isArray(b.sc) ? b.sc.map(Number) : [];
-    if (sc.length !== crit.length || sc.some((v, i) => !Number.isInteger(v) || v < 0 || v > crit[i][1])) throw new Bad({ sc: 'النقاط غير صحيحة.' });
+    const mode = b.mode == null || b.mode === '' ? C.DEFAULT_MODE : String(b.mode); // payloads from before Freestyle carry no mode = kyorugi
+    if (!C.getMode(mode)) throw new Bad({ mode: 'نوع التقييم غير صحيح.' });
+    const vr = C.validateRatings(b.r, mode);
+    if (!vr.ok) throw new Bad({ r: vr.error });
+    const sc = C.scoreRatings(vr.ratings, mode); // total/max are always computed server-side
+    const nf = N.fromBody(b); // 5 note fields: trimmed, string, <= N.MAX_LEN (old `im` accepted)
+    if (!nf.ok) throw new Bad(nf.errors);
     const s = (v) => String(v ?? '');
-    const e = await Evaluation.create({ athlete: b.pid, date: s(b.date), stage: s(b.stage), type: b.type, scores: sc, total: sc.reduce((x, y) => x + y, 0), strengths: s(b.st), improve: s(b.im), goal: s(b.goal), notes: s(b.nt), by: s(b.by) || 'المدرب' }); // total is computed server-side
+    const e = await Evaluation.create({ athlete: b.pid, date: s(b.date), stage: s(b.stage), v: 2, mode, ratings: vr.ratings, total: sc.total, max: sc.max, ...nf.values, by: s(b.by) || 'المدرب' }); // total is computed server-side
     res.status(201).json(outEval(e.toObject()));
   } catch (err) { sendErr(err, res, next); }
 });
@@ -295,6 +362,51 @@ app.delete('/api/admin/evaluations/:id', requireStaff, async (req, res, next) =>
     const e = await Evaluation.findById(req.params.id).select('athlete');
     if (!e || !(await Athlete.exists({ _id: e.athlete, ...req.scope }))) return res.status(404).json({ message: 'التقييم غير موجود.' });
     await Evaluation.deleteOne({ _id: e._id });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// ---- coach approval gate: review pending registrations (session-checked; a coach only sees his own) ----
+const reviewer = (req) => (req.staff.owner ? 'المسؤول' : req.staff.coach.name);
+app.get('/api/admin/registrations', requireStaff, async (req, res, next) => { // polled by the dashboard (~15s) to raise the pop-up
+  try { res.json({ pending: await pendingFor(req) }); } catch (err) { next(err); }
+});
+// Atomically claim a still-pending request in this caller's scope. null = already decided / not his / unknown.
+const claimRegistration = (req, status, extra) => Registration.findOneAndUpdate(
+  { _id: req.params.id, status: 'pending', ...req.scope },
+  { $set: { status, reviewedAt: new Date(), reviewedBy: reviewer(req), ...extra } }, { new: true }
+).select('+passwordHash');
+async function whyNotClaimed(req, res) { // distinguish "gone" from "someone already decided it"
+  const r = await Registration.findOne({ _id: req.params.id, ...req.scope }).select('status').lean();
+  return r ? res.status(409).json({ message: 'تمت معالجة هذا الطلب من قبل.' }) : res.status(404).json({ message: 'الطلب غير موجود.' });
+}
+app.post('/api/admin/registrations/:id/accept', requireStaff, async (req, res, next) => {
+  let r = null, created = false;
+  try {
+    if (!okId(req.params.id)) return res.status(400).json({ message: 'معرّف غير صحيح.' });
+    r = await claimRegistration(req, 'approved'); // claim first: a double click / second device cannot create two athletes
+    if (!r) return await whyNotClaimed(req, res);
+    const a = AGE.assess(r.dob); // category is recomputed at the moment of persisting, not trusted from the stored request
+    if (!a.ok) throw new Bad({ dob: a.message });
+    const doc = await Athlete.create({ firstName: r.firstName, lastName: r.lastName, region: r.region, belt: r.belt, weight: r.weight, gender: r.gender, dob: r.dob, specialty: r.specialty, category: a.category, phone: r.phone, source: 'link', coach: r.coach, passwordHash: r.passwordHash });
+    created = true;
+    await Registration.updateOne({ _id: r._id }, { $set: { athlete: doc._id, category: a.category }, $unset: { passwordHash: 1 } });
+    console.info(`[registration] accepted ${r._id} by ${reviewer(req)} -> athlete ${doc._id}`);
+    res.json({ ok: true, athlete: outAthlete(doc.toObject(), await namesFor(req)) });
+  } catch (err) {
+    if (r && !created) await Registration.updateOne({ _id: r._id }, { $set: { status: 'pending' }, $unset: { reviewedAt: 1, reviewedBy: 1 } }).catch(() => {}); // not persisted: put it back in the queue
+    if (err.code === 11000) return res.status(409).json({ message: 'هذا الرقم مسجّل كلاعب من قبل. ارفض الطلب أو غيّر اللاعب الموجود.' });
+    sendErr(err, res, next);
+  }
+});
+app.post('/api/admin/registrations/:id/deny', requireStaff, async (req, res, next) => {
+  try {
+    if (!okId(req.params.id)) return res.status(400).json({ message: 'معرّف غير صحيح.' });
+    const reason = String((req.body || {}).reason || '').trim().slice(0, 200);
+    const r = await claimRegistration(req, 'denied', reason ? { reason } : {});
+    if (!r) return await whyNotClaimed(req, res);
+    await Registration.updateOne({ _id: r._id }, { $unset: { passwordHash: 1 } }); // the athlete never gets an account
+    console.info(`[registration] denied ${r._id} by ${reviewer(req)}`);
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -313,7 +425,8 @@ app.put('/api/admin/athletes/:id', requireStaff, async (req, res, next) => {
     const gd = parseGenderDob(b, Boolean(a.gender || a.dob));
     if (gd.gender) a.gender = gd.gender;
     if (gd.dob) a.dob = gd.dob;
-    a.set({ firstName: b.firstName, lastName: b.lastName, region: b.region, belt: b.belt, weight, specialty: b.specialty, category: b.category, phone });
+    // category is server-derived whenever a DOB exists; only legacy athletes with no DOB may still carry a coach-chosen one
+    a.set({ firstName: b.firstName, lastName: b.lastName, region: b.region, belt: b.belt, weight, specialty: b.specialty, category: a.dob ? gd.category || categoryOf(a) : b.category, phone });
     if (req.staff.owner && okId(b.coach) && (await Coach.exists({ _id: b.coach }))) a.coach = b.coach; // only the owner can move an athlete to another coach
     await a.save();
     res.json(outAthlete(a.toObject(), await namesFor(req)));
@@ -342,11 +455,19 @@ app.put('/api/admin/evaluations/:id', requireStaff, async (req, res, next) => {
     const e = await Evaluation.findById(req.params.id);
     if (!e || !(await Athlete.exists({ _id: e.athlete, ...req.scope }))) return res.status(404).json({ message: 'التقييم غير موجود.' });
     const b = req.body || {};
-    const crit = CRIT[e.type].slice(0, e.scores.length); // an old 7-criteria evaluation stays 7
-    const sc = Array.isArray(b.sc) ? b.sc.map(Number) : [];
-    if (sc.length !== crit.length || sc.some((v, i) => !Number.isInteger(v) || v < 0 || v > crit[i][1])) throw new Bad({ sc: 'النقاط غير صحيحة.' });
+    const fields = {};
+    const nf = N.fromBody(b, N.fromDoc(e)); // absent fields keep their current (or legacy-mapped) value
+    if (!nf.ok) throw new Bad(nf.errors);
+    if ((e.v || 1) === 2) { // metric-based evaluation: scores are editable, the mode is not (it defines which metrics exist)
+      const mode = C.modeOf(e);
+      if (b.mode != null && b.mode !== '' && b.mode !== mode) throw new Bad({ mode: 'نوع التقييم ما يتبدّلش بعد الحفظ.' });
+      const vr = C.validateRatings(b.r, mode);
+      if (!vr.ok) throw new Bad({ r: vr.error });
+      const sc = C.scoreRatings(vr.ratings, mode);
+      Object.assign(fields, { mode, ratings: vr.ratings, total: sc.total, max: sc.max }); // also stamps pre-Freestyle docs with 'kyorugi'
+    } // a legacy (v1) evaluation keeps its original scores: only date, stage and the texts change
     const s = (v) => String(v ?? '');
-    e.set({ date: s(b.date), stage: s(b.stage), scores: sc, total: sc.reduce((x, y) => x + y, 0), strengths: s(b.st), improve: s(b.im), goal: s(b.goal), notes: s(b.nt), by: s(b.by) || 'المدرب' });
+    e.set({ date: s(b.date), stage: s(b.stage), ...fields, ...nf.values, improve: undefined, by: s(b.by) || 'المدرب' });
     await e.save();
     res.json(outEval(e.toObject()));
   } catch (err) { sendErr(err, res, next); }
@@ -362,6 +483,7 @@ app.get('/admin/export.xlsx', adminLimiter, async (req, res, next) => {
     const cn = st.owner ? await coachNames() : null;
     const names = new Map(athletes.map((a) => [String(a._id), `${a.firstName} ${a.lastName}`]));
     const wb = new ExcelJS.Workbook();
+    const ALL_CATEGORIES = C.MODE_IDS.flatMap((id) => C.MODES[id].categories), ALL_METRICS = C.MODE_IDS.flatMap((id) => C.MODES[id].metrics);
     const sheet = (title, cols) => {
       const ws = wb.addWorksheet(title, { views: [{ rightToLeft: true, state: 'frozen', ySplit: 1 }] });
       ws.columns = cols.map(([header, key, width]) => ({ header, key, width, style: { alignment: { vertical: 'top', wrapText: true } } }));
@@ -374,10 +496,21 @@ app.get('/admin/export.xlsx', adminLimiter, async (req, res, next) => {
     const aCols = [['الاسم (First name)', 'firstName', 18], ['اللقب (Last name)', 'lastName', 18], ['الولاية (Region)', 'region', 22], ['الحزام (Belt)', 'belt', 24], ['الوزن kg (Weight)', 'weight', 14], ['الاختصاص (Specialty)', 'specialty', 20], ['الفئة (Category)', 'category', 18], ['الجنس (Gender)', 'gender', 12], ['تاريخ الميلاد (Date of birth)', 'dob', 16], ['الهاتف (Phone)', 'phone', 16], ['المصدر (Source)', 'source', 14], ['تاريخ التسجيل (Registered)', 'createdAt', 22]];
     if (st.owner) aCols.push(['المدرب (Coach)', 'coachName', 18]);
     const wa = sheet('اللاعبون', aCols);
-    athletes.forEach((a) => wa.addRow({ ...a, coachName: cn ? (cn.get(String(a.coach)) || 'بلا مدرب') : '', region: lab(REGIONS, a.region), belt: lab(BELTS, a.belt), specialty: lab(SPECIALTIES, a.specialty), category: lab(CATEGORIES, a.category), gender: lab(GENDERS, a.gender), source: a.source === 'coach' ? 'المدرب' : 'الرابط' }));
+    athletes.forEach((a) => wa.addRow({ ...a, coachName: cn ? (cn.get(String(a.coach)) || 'بلا مدرب') : '', region: lab(REGIONS, a.region), belt: lab(BELTS, a.belt), specialty: lab(SPECIALTIES, a.specialty), category: lab(CATEGORIES, categoryOf(a)), gender: lab(GENDERS, a.gender), source: a.source === 'coach' ? 'المدرب' : 'الرابط' }));
     wa.getColumn('createdAt').numFmt = 'dd/mm/yyyy hh:mm';
-    const we = sheet('التقييمات', [['اللاعب', 'who', 22], ['التاريخ', 'date', 12], ['المرحلة', 'stage', 20], ['النوع', 'type', 18], ['المجموع', 'total', 10], ['من', 'max', 8], ['التفاصيل', 'detail', 60], ['نقاط القوة', 'strengths', 30], ['نقاط التحسين', 'improve', 30], ['الهدف القادم', 'goal', 30], ['ملاحظات', 'notes', 30], ['أجراه', 'by', 10]]);
-    evals.forEach((e) => we.addRow({ ...e, max: (CRIT[e.type] || []).slice(0, e.scores.length).reduce((a, c) => a + c[1], 0), who: names.get(String(e.athlete)) || '(محذوف)', stage: STAGES[e.stage], type: TYPES[e.type], detail: (CRIT[e.type] || []).slice(0, e.scores.length).map((c, i) => `${c[0]}: ${e.scores[i]}/${c[1]}`).join(' | ') }));
+    const we = sheet('التقييمات', [
+      ['اللاعب', 'who', 22], ['التاريخ', 'date', 12], ['المرحلة', 'stage', 20], ['القسم', 'modeTitle', 14], ['النسخة', 'kind', 16],
+      ['المجموع', 'total', 10], ['من', 'max', 8], ['النسبة %', 'pct', 10],
+      ...ALL_CATEGORIES.map((c) => [c.title, `cat_${c.id}`, 18]), // titles only: the coach export never carries descriptions
+      ...ALL_METRICS.map((m) => [m.title, `m_${m.id}`, 14]),
+      ...N.FIELDS.map((f) => [f.label, f.key, 30]), ['أجراه', 'by', 10]
+    ]);
+    evals.forEach((e) => {
+      const v = C.describe(e);
+      const row = { ...e, ...N.fromDoc(e), who: names.get(String(e.athlete)) || '(محذوف)', stage: STAGES[e.stage], modeTitle: C.modeTitle(v.mode), kind: v.legacy ? `قديم (${C.LEGACY_TYPES[e.type] || ''})` : `${v.groups.reduce((a, g) => a + g.items.length, 0)} معيار`, total: v.total, max: v.max, pct: v.pct };
+      if (!v.legacy) v.groups.forEach((g) => { row[`cat_${g.id}`] = `${g.score}/${g.max}`; g.items.forEach((i) => { row[`m_${i.id}`] = i.score; }); });
+      we.addRow(row);
+    });
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="tkd-${new Date().toISOString().slice(0, 10)}.xlsx"`);
@@ -427,6 +560,7 @@ app.delete('/api/admin/coaches/:id', requireStaff, requireOwner, async (req, res
   try {
     const c = okId(req.params.id) ? await Coach.findById(req.params.id).select('_id') : null;
     if (!c) return res.status(404).json({ message: 'المدرب غير موجود.' });
+    if (await Registration.exists({ coach: c._id, status: 'pending' })) return res.status(400).json({ message: 'عند هذا المدرب طلبات تسجيل في الانتظار. اقبلها أو ارفضها أولًا.' });
     if (await Athlete.exists({ coach: c._id })) return res.status(400).json({ message: 'عند هذا المدرب لاعبون. انقلهم لمدرب آخر أولًا، أو استعمل «إيقاف».' });
     await Coach.deleteOne({ _id: c._id });
     res.json({ ok: true });
@@ -488,13 +622,9 @@ app.get('/api/athlete/me', requireAthlete, async (req, res, next) => {
     const coach = a.coach ? await Coach.findById(a.coach).select('name').lean() : null;
     const evs = await Evaluation.find({ athlete: a._id }).sort({ date: -1, createdAt: -1 }).lean();
     res.json({
-      athlete: { coach: coach ? coach.name : '', firstName: a.firstName, region: ar(REGIONS, a.region), belt: ar(BELTS, a.belt), weight: a.weight, specialty: ar(SPECIALTIES, a.specialty), category: ar(CATEGORIES, a.category) },
+      athlete: { coach: coach ? coach.name : '', firstName: a.firstName, region: ar(REGIONS, a.region), belt: ar(BELTS, a.belt), weight: a.weight, specialty: ar(SPECIALTIES, a.specialty), category: ar(CATEGORIES, categoryOf(a)) },
       // the coach's private notes are never sent to the athlete
-      evaluations: evs.map((e) => {
-        const crit = CRIT[e.type].slice(0, e.scores.length);
-        const max = crit.reduce((x, c) => x + c[1], 0);
-        return { id: String(e._id), date: e.date, stage: STAGES[e.stage], type: e.type, typeLabel: TYPES[e.type], total: e.total, max, pct: Math.round((e.total / max) * 100), items: crit.map((c, i) => ({ n: c[0], m: c[1], s: e.scores[i] })), st: e.strengths, im: e.improve, goal: e.goal };
-      })
+      evaluations: evs.map((e) => ({ id: String(e._id), date: e.date, stage: STAGES[e.stage], v: e.v || 1, mode: C.modeOf(e), r: e.ratings || null, sc: e.scores || null, type: e.type || '', total: e.total, ...N.toApi(N.fromDoc(e), C.VIEWS.ATHLETE) }))
     });
   } catch (err) { next(err); }
 });

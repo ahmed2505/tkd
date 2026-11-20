@@ -1,4 +1,5 @@
 (function () {
+  var C = TKD_CRITERIA, V = TKD_VIEW, N = TKD_NOTES, VIEW = C.VIEWS.ATHLETE; // role context: athlete scores show metric title + (explanation)
   var app = document.getElementById('app'), data = null, loading = true;
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function fmt(iso) { var a = String(iso).split('-'); return a.length === 3 ? a[2] + '/' + a[1] + '/' + a[0] : iso; }
@@ -16,22 +17,32 @@
       '<button class="btn" id="go">دخول</button><p id="status" role="alert"></p></div>';
   }
   function evCard(e) {
-    return '<div class="item"><div class="top"><div><b>' + esc(e.stage) + '</b><div><span class="tag">' + esc(e.typeLabel) + '</span><span class="tag">' + fmt(e.date) + '</span></div></div><div class="sc">' + e.total + '/' + e.max + '</div></div>' +
-      '<div class="bar"><i style="width:' + e.pct + '%"></i></div>' +
-      e.items.map(function (i) { return '<div style="margin-top:10px"><div style="display:flex;justify-content:space-between"><span>' + esc(i.n) + '</span><b style="direction:ltr">' + i.s + '/' + i.m + '</b></div><div class="bar"><i style="width:' + Math.round(i.s / i.m * 100) + '%"></i></div></div>'; }).join('') +
-      (e.st ? '<p><b>نقاط القوة:</b> ' + esc(e.st) + '</p>' : '') + (e.im ? '<p><b>نقاط التحسين:</b> ' + esc(e.im) + '</p>' : '') + (e.goal ? '<p><b>🎯 الهدف القادم:</b> ' + esc(e.goal) + '</p>' : '') + '</div>';
+    var v = C.describe(e, VIEW);
+    return '<div class="item"><div class="top"><div><b>' + esc(e.stage) + '</b><div><span class="tag">' + esc(C.modeTitle(v.mode)) + (v.legacy ? ' · قديم' : '') + '</span><span class="tag">' + fmt(e.date) + '</span></div></div><div class="sc">' + v.total + '/' + v.max + '</div></div>' +
+      '<div class="bar"><i style="width:' + v.pct + '%"></i></div>' + V.groups(e, VIEW) +
+      V.notes(N.fromApi(e), VIEW) + '</div>'; // only the fields an athlete may see (never الملاحظات)
   }
   function dash() {
     var a = data.athlete, ev = data.evaluations;
     var h = '<div class="head"><div><h1>أهلا ' + esc(a.firstName) + ' 🥋</h1><small>TKD_2026 • ATHLETE</small></div><button class="pill" id="out">خروج</button></div>';
     h += '<div class="card">' + tag(a.category) + tag(a.weight + ' kg') + tag(a.belt) + tag(a.specialty) + tag(a.region) + (a.coach ? '<p class="muted" style="margin:10px 0 0">مدربك: <b>' + esc(a.coach) + '</b></p>' : '') + '</div>';
     if (!ev.length) return h + '<div class="card"><h2>تقييماتك</h2><p class="muted">ما فماش تقييم بعد. باش يظهرلك هنا على طول بعد ما يسجّلو المدرب.</p></div>' + pwCard();
-    h += '<div class="total"><div class="muted">آخر تقييم: ' + fmt(ev[0].date) + '</div><big>' + ev[0].pct + '%</big><div class="muted">' + ev[0].total + '/' + ev[0].max + '</div></div>';
-    ['ky', 'po'].forEach(function (t) {
-      var l = ev.filter(function (e) { return e.type === t; });
-      if (l.length > 1) { var d = l[0].pct - l[l.length - 1].pct; h += '<div class="card"><h2>تطورك في ' + esc(l[0].typeLabel) + '</h2><p>الفرق بين أول وآخر تقييم: <b class="' + (d >= 0 ? 'up' : 'down') + '" style="direction:ltr;display:inline-block">' + (d > 0 ? '+' : '') + d + '%</b></p></div>'; }
-    });
+    var vs = ev.map(function (e) { return C.describe(e, VIEW); }); // newest first
+    h += '<div class="total"><div class="muted">آخر تقييم: ' + fmt(ev[0].date) + '</div><big>' + vs[0].pct + '%</big><div class="muted">' + vs[0].total + '/' + vs[0].max + '</div></div>';
+    h += progressCard(vs);
     return h + '<div class="card"><h2>كل تقييماتك</h2>' + ev.map(evCard).join('') + '</div>' + pwCard();
+  }
+  // Progress is only meaningful inside one mode (Kyorugi and Freestyle have different categories), so it is computed per mode.
+  function progressCard(vs) { // vs: described evaluations, newest first
+    var by = {}, out = '';
+    vs.forEach(function (v) { (by[v.mode] = by[v.mode] || []).push(v); });
+    Object.keys(by).forEach(function (m) {
+      var l = by[m]; if (l.length < 2) return;
+      var d = l[0].pct - l[l.length - 1].pct, nw = l.filter(function (v) { return !v.legacy; });
+      out += '<h3 style="margin:14px 0 6px">' + esc(C.modeTitle(m)) + '</h3><p>الفرق بين أول وآخر تقييم: <b class="' + (d >= 0 ? 'up' : 'down') + '" style="direction:ltr;display:inline-block">' + (d > 0 ? '+' : '') + d + '%</b></p>';
+      if (nw.length > 1) out += nw[0].groups.map(function (g, i) { var x = g.pct - nw[nw.length - 1].groups[i].pct; return '<div class="gv-i"><span>' + esc(g.title) + '</span><b class="' + (x >= 0 ? 'up' : 'down') + '" style="direction:ltr">' + (x > 0 ? '+' : '') + x + '%</b></div>'; }).join('');
+    });
+    return out ? '<div class="card"><h2>تطورك</h2>' + out + '</div>' : '';
   }
   function pwCard() {
     return '<div class="card"><h2>تغيير كلمة السر</h2><label>كلمة السر الحالية</label><input id="cp" type="password" dir="ltr" autocomplete="current-password" autocapitalize="none"><label>كلمة السر الجديدة (6 أحرف على الأقل)</label><input id="np" type="password" dir="ltr" autocomplete="new-password" autocapitalize="none"><button class="btn sec" id="chg">تغيير</button></div>';

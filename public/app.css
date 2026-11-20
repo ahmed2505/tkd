@@ -57,3 +57,62 @@ legend{font-weight:600;margin:14px 0 6px;padding:0}
 .trap{position:absolute;left:-9999px;top:-9999px}
 #status{color:var(--bad);font-weight:600;margin:12px 0 0}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* ---- 5 categories / 20 metrics (RTL, mobile first) ---- */
+.cat{margin:18px 0 0;padding:14px 14px 6px;border:1px solid var(--bd);border-radius:18px;background:var(--c2)}
+.cat-h{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding-bottom:6px}
+.cat-h h3{margin:0;font-size:16px;line-height:1.45}
+.cat-h small,.gv-h small{display:block;color:var(--mu);font-size:11px;letter-spacing:.3px;margin-top:2px;direction:ltr;text-align:right}
+.cat-h .n,.metric-h .n,.gv-h .sc{flex:none;color:var(--mu);font-weight:700;direction:ltr;font-variant-numeric:tabular-nums;white-space:nowrap}
+.metric{padding:12px 0;border-top:1px solid var(--bd)}
+.cat-h+.metric{border-top:0}
+.metric-h{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.metric-h b{line-height:1.5}
+.metric-h small{display:block;color:var(--mu);font-size:12.5px;line-height:1.55;margin-top:2px}
+.metric input[type=range]{width:100%;margin-top:8px}
+.gv{margin:14px 0 0}
+.gv-h{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.gv-i{display:flex;justify-content:space-between;gap:12px;padding:5px 0;font-size:14px;color:var(--tx)}
+.gv-i b{direction:ltr;font-variant-numeric:tabular-nums}
+@media(min-width:720px){.cat{padding:16px 18px 8px}.metric-h small{font-size:13px}}
+
+/* ---- Freestyle mode picker + role-based metric descriptions ---- */
+.seg.two{grid-template-columns:repeat(2,1fr)}
+.seg input:disabled+span{opacity:.6;cursor:not-allowed}
+.gv-t{flex:1;min-width:0;line-height:1.55}
+.gv-t .mdesc{color:var(--mu);font-size:12.5px;font-weight:400}
+.gv-i .gv-s{flex:none;align-self:flex-start}
+
+/* ---- 5 structured note fields (RTL; stacked, full width, wraps on any screen) ---- */
+.nfield{margin:0}
+.nfield label{margin-bottom:4px}
+.nfield textarea{min-height:84px}
+.fhint{display:block;color:var(--mu);font-size:12.5px;font-weight:400;line-height:1.5;margin:0 0 6px}
+.nf{margin:12px 0 0;padding-top:10px;border-top:1px solid var(--bd)}
+.nf b{display:block;font-size:14px}
+.nf p{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65}
+
+/* ---- DOB-derived category badge (registration + coach forms) ---- */
+.catbadge{display:block;background:var(--in);border:1px dashed var(--bd);border-radius:18px;padding:13px 14px;font-size:16px;color:var(--mu)}
+.catbadge.kids{border-color:#b58900;color:#f0c040}
+.catbadge.bad{border-color:var(--bad);color:var(--bad)}
+.catbadge:not(:empty):not(.bad){color:var(--tx)}
+select:disabled{opacity:.7}
+
+/* ---- Coach approval gate: pending-registration pop-up ---- */
+#pmodal[hidden]{display:none}
+#pmodal{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,.72);overflow-y:auto}
+.pm-box{width:100%;max-width:460px;max-height:100%;overflow-y:auto;background:var(--c1);border:1px solid var(--bd);border-radius:26px;padding:20px;box-shadow:0 18px 60px rgba(0,0,0,.6)}
+.pm-box h2{margin:0;font-size:20px}
+.pm-top{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}
+.pm-count{background:#2a2a2a;border-radius:999px;padding:2px 12px;font-size:12px;color:var(--mu);white-space:nowrap}
+.pm-who{font-size:22px;font-weight:800;margin:4px 0 2px}
+.pm-dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:12px 0 0;font-size:15px}
+.pm-dl dt{color:var(--mu)}.pm-dl dd{margin:0;font-weight:600;overflow-wrap:anywhere}
+.pm-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}
+.pm-actions .btn{margin:0;padding:14px}
+.btn.ok{background:var(--ok);color:#00200a}
+.btn.red.arm{background:var(--bad);color:#fff}
+.pm-later{display:block;width:100%;background:none;border:0;color:var(--mu);margin-top:12px;padding:8px;font-size:14px;cursor:pointer;font-family:inherit;text-decoration:underline}
+.pm-actions .btn:disabled{opacity:.55;cursor:wait}
+.tab .bdg{display:inline-block;min-width:18px;background:var(--bad);color:#fff;border-radius:999px;font-size:11px;font-weight:800;line-height:18px;padding:0 5px;margin-inline-start:4px}

@@ -40,3 +40,57 @@ Install the coach dashboard on your phone from `/coach` ("Add to Home Screen").
 
 ## v4.1
 - Registration (and the coach's add/edit forms) now also asks for **gender** and **date of birth**. Both appear in the Excel export (the athlete's age shows as a tag in the coach dashboard). Athletes registered before this version don't have them; open the athlete ← تعديل to fill them in.
+
+## Evaluation model: modes (Kyorugi, Freestyle) and role-based descriptions
+`public/criteria.js` is the only place metrics are defined (Arabic title + parenthetical description, scale, validation,
+per-category aggregation, visibility rule). The server `require`s it and the browser loads it, so nothing is duplicated.
+
+**Modes.** `kyorugi` = the original 5 categories / 20 metrics. `freestyle` = 3 categories / 10 metrics (ids prefixed `fs_`).
+New evaluations are stored as `v: 2, mode, ratings: { metricId: 0..10 }`. Evaluations saved before Freestyle have no `mode`
+and are treated as Kyorugi (no migration needed); legacy `v: 1` evaluations stay read-only (`type: 'po'` shows as Poomsae).
+The mode of a saved evaluation cannot change (it defines which metrics exist). To add a mode, add an entry to `SOURCE` and
+`MODE_INFO` in `criteria.js`; the form, scoring, validation, Excel columns and filters pick it up.
+API: `POST/PUT /api/admin/evaluations` accept `mode` (omitted = `kyorugi`, so old clients keep working);
+`GET /api/admin/data?mode=kyorugi|freestyle|poomsae` filters server-side (the dashboard filters locally).
+
+**Who sees what.** Every renderer receives a role context, `TKD_CRITERIA.VIEWS.COACH` or `.ATHLETE`:
+- Coach form, coach log/details, progress and Excel: metric **title only**.
+- Athlete portal scores: **title (explanation)**.
+The rule lives in one place: `metricLabel()` / `categoryLabel()` / `describe(ev, view)`. Descriptions are removed from the
+data itself for non-athlete views and an unknown or missing view fails closed to titles only, so a UI cannot leak them by
+forgetting a check. Never read `metric.description` in UI code; use `TKD_VIEW.metricName(metric, view)`.
+
+Run the tests with `npm test` (includes smoke tests that execute `coach.js` and `athlete.js` against a DOM stub).
+
+## Evaluation text fields: 5 structured notes
+`public/notes.js` is the only place these are defined (label, payload name, length limit, legacy fallbacks, visibility), loaded by the
+server and the browser like `criteria.js`. In order:
+
+| Label | Stored as | Payload | Athlete sees it |
+|---|---|---|---|
+| نقاط القوة | `strengths` | `st` | yes |
+| المهارات التي يجب تطويرها | `develop` | `dv` | yes |
+| هدف التقييم القادم | `goal` | `goal` | yes |
+| التوصيات و الاقتراحات | `recommendations` | `rec` | yes |
+| الملاحظات | `notes` | `nt` | **no** (coach-only, as before) |
+
+- Each field is optional text, trimmed, max 1000 characters. Validation (type + length) runs on the server for POST and PUT, with Arabic per-field messages.
+- **Legacy data needs no migration script.** Old records stored the "skills to develop" text as `improve` (payload `im`). Reads fall back to it when `develop` is empty, so it
+  shows under المهارات التي يجب تطويرها; the next edit saves the new field and removes `improve`. Records with no note fields at all render without empty blocks and save normally.
+- PUT is a partial update: a field missing from the payload keeps its current value (an old client can't wipe `recommendations`); `null` clears it. Old clients sending `im` still work.
+- To make الملاحظات visible to athletes, flip `athlete: true` on that field in `notes.js`. The server, the athlete portal and the coach form hint all follow it.
+
+## v5: coach approval gate + automatic age category
+**Approval gate.** A registration made through a coach's link is stored in the `registrations` collection with `status: 'pending'`; it is **not** an athlete yet
+(no roster entry, no Excel row, no athlete login). The coach dashboard raises a pop-up for each pending request (details + **قبول / Accept** and **رفض / Deny**).
+- Accept: the request is claimed atomically, an `Athlete` is created (category re-derived from the DOB at that moment) and the request is marked `approved`.
+- Deny: the request is marked `denied` (kept as a log, password hash dropped); no athlete is created. The same phone may register again later.
+- The pop-up is fed by `/api/admin/data` (first load) and `GET /api/admin/registrations` (polled every 15 s while the tab is visible). A coach only sees his own requests; the owner sees all.
+- «لاحقًا» hides the pop-up for the session; the request stays in the tab badge and in the **التسجيلات** tab, where it can also be accepted / denied.
+- The athlete still gets a password on the thank-you screen (stored hashed on the request, copied to the athlete on Accept). It works only after Accept.
+- API: `POST /api/admin/registrations/:id/accept`, `POST /api/admin/registrations/:id/deny` (optional body `{ reason }`), `GET /api/admin/registrations`.
+
+**Age category.** `public/age-category.js` is the only place the rule lives (server `require`s it, browser loads it, like `criteria.js`):
+Cadet 12-14, Junior 15-17, Senior 18+, under 12 = `Kids` (Under Cadet). The category is **never accepted from the client**: it is derived from the DOB on registration,
+on accept, on coach add/edit, and recomputed when athletes are read (so a Cadet who turns 15 shows as Junior without a migration; athletes with no DOB keep their stored value).
+To use a federation birth-year cut-off (`season year - birth year`) set `AGE_MODE = 'birth-year'` in that file; to reject under-12s set `ALLOW_UNDER_CADET = false`; to change bands edit `BANDS`.
