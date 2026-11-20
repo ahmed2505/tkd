@@ -8,7 +8,7 @@
   fetch('/api/coach/' + encodeURIComponent(slug))
     .then(function (res) { if (!res.ok) throw new Error('bad'); return res.json(); })
     .then(function (c) { document.getElementById('coachLine').textContent = 'التسجيل مع المدرب: ' + c.name + '. املأ معلوماتك وابعثها.'; form.hidden = false; })
-    .catch(function () { document.getElementById('bad').hidden = false; });
+    .catch(function () { document.getElementById('bad').hidden = false; document.getElementById('coachLine').hidden = true; });
   var AGE = TKD_AGE; // shared with the server (public/age-category.js); the server re-computes everything on submit
   var dobEl = document.getElementById('dob'), catOut = document.getElementById('catOut');
   dobEl.max = AGE.todayISO();

@@ -9,6 +9,12 @@ function lab(l,v){var x=l.filter(function(y){return y[0]===v})[0];return x?x[1]:
 var S={players:[],evals:[],pend:[],me:{role:'coach',name:'',slug:''},coaches:[],unassigned:0},authed=false,loading=true,newCoach=null;
 var creds=[],editId='';
 var view='home',draft=null,logF={p:'',m:''},progP='',progM=C.DEFAULT_MODE,dbRef=null,dbReq=[],isCoach=true,msg='';
+var I=(typeof TKD_ICON==='function')?TKD_ICON:function(){return''};
+var spun=false;function mark(){var f=!spun;spun=true;return typeof TKD_MARK==='function'?TKD_MARK(f):''}
+function beltChip(v,l){return typeof TKD_BELT==='function'?TKD_BELT(v,l):'<span class="tag">'+esc(l)+'</span>'}
+function beltOf(pid){var p=S.players.filter(function(x){return x.id===pid})[0];return p?p.belt:''}
+function beltAttr(b){return b?' data-belt="'+esc(b)+'"':''}
+var menuBound=false;
 var app=document.getElementById('app');
 var regMode=false;
 
@@ -27,28 +33,37 @@ function go(v){view=v;if(v!=='coaches')newCoach=null;render();window.scrollTo(0,
 function api(m,u,b){return fetch(u,{method:m,credentials:'same-origin',headers:b?{'Content-Type':'application/json'}:{},body:b?JSON.stringify(b):undefined}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){if(r.status===401&&u.indexOf('login')<0){authed=false;render()}if(!r.ok){var e=new Error(j.message||'');e.errors=j.errors||{};throw e}return j})})}
 function reload(){return api('GET','/api/admin/data').then(function(d){S.players=d.athletes;S.evals=d.evaluations;S.pend=d.pending||[];S.me=d.me;S.coaches=d.coaches||[];S.unassigned=d.unassigned||0;authed=true})}
 function errMsg(e){var k=Object.keys(e.errors||{});return k.length?e.errors[k[0]]:(e.message||'صار مشكل في الاتصال، عاود المحاولة')}
-function tags(p){return(S.me.role==='owner'?'<span class="tag">👤 '+esc(p.coachName||'بلا مدرب')+'</span>':'')+'<span class="tag">'+esc(lab(CATS,p.cat))+'</span><span class="tag">'+esc(p.weight)+' kg</span><span class="tag">'+esc(lab(BELTS,p.belt))+'</span><span class="tag">'+esc(lab(SPECS,p.spec))+'</span><span class="tag">'+esc(lab(REG,p.region))+'</span>'+(p.gender?'<span class="tag">'+esc(lab(GENS,p.gender))+'</span>':'')+(p.dob?'<span class="tag">'+age(p.dob)+' سنة</span>':'')}
-function header(){return'<div class="head"><div><h1>TKD_2026 🥋</h1><small>'+esc(S.me.name)+'</small></div><button class="pill" id="logout">خروج</button></div>'}
-function tabs(){var T=[['home','الرئيسية'],['eval','تقييم جديد'],['log','السجل'],['reg','إضافة لاعب'],['req','التسجيلات']];if(S.me.role==='owner')T.push(['coaches','المدربون']);T.push(['acct','حسابي']);
-return'<div class="tabs">'+T.map(function(t){var on=(view===t[0])||(t[0]==='home'&&['players','backup','prog','editP','creds'].indexOf(view)>-1);return'<button class="tab'+(on?' on':'')+'" data-v="'+t[0]+'">'+t[1]+(t[0]==='req'?badge():'')+'</button>'}).join('')+'</div>'}
+function tags(p){return(S.me.role==='owner'?'<span class="tag">'+I('users')+esc(p.coachName||'بلا مدرب')+'</span>':'')+'<span class="tag">'+esc(lab(CATS,p.cat))+'</span><span class="tag">'+esc(p.weight)+' kg</span>'+beltChip(p.belt,lab(BELTS,p.belt))+'<span class="tag">'+esc(lab(SPECS,p.spec))+'</span><span class="tag">'+esc(lab(REG,p.region))+'</span>'+(p.gender?'<span class="tag">'+esc(lab(GENS,p.gender))+'</span>':'')+(p.dob?'<span class="tag">'+age(p.dob)+' سنة</span>':'')}
+function header(){var own=S.me.role==='owner',nm=S.me.name||'',ini=esc(String(nm).trim().replace(/^ال(?=\S)/,'').charAt(0)||'؟');
+return'<div class="head"><div class="brand">'+mark()+'<div><h1>TKD 2026</h1><small>'+esc(own?'المسؤول':'لوحة المدرب')+'</small></div></div>'+
+'<div class="acct"><button class="av" id="acctBtn" aria-haspopup="menu" aria-expanded="false" aria-label="الحساب">'+I('person')+'</button>'+
+'<button class="ib" id="logout" aria-label="تسجيل الخروج" title="تسجيل الخروج">'+I('logout')+'</button>'+
+'<div class="amenu" id="acctMenu" role="menu" hidden><div class="amh"><b>'+esc(nm)+'</b><span>'+esc(own?'حساب المسؤول':(S.me.username||'حساب مدرب'))+'</span></div>'+
+'<button class="mi" role="menuitem" data-go="acct">'+I('user')+'حسابي</button>'+
+(own?'<button class="mi" role="menuitem" data-go="coaches">'+I('users')+'المدربون</button>':'')+
+'<button class="mi" role="menuitem" id="switchAcc">'+I('swap')+'تبديل الحساب</button>'+
+'<button class="mi out" role="menuitem" id="logout2">'+I('logout')+'تسجيل الخروج</button></div></div></div>'}
+var NAVI={home:'home',eval:'eval',reg:'plus',log:'list',req:'inbox'};
+function tabs(){var T=[['home','الرئيسية'],['eval','تقييم'],['reg','إضافة لاعب'],['log','السجل'],['req','التسجيلات']];
+return'<nav class="tabs" aria-label="التنقل">'+T.map(function(t){var on=(view===t[0])||(t[0]==='home'&&['players','backup','prog','creds'].indexOf(view)>-1)||(t[0]==='reg'&&view==='editP');return'<button class="tab'+(on?' on':'')+(t[0]==='reg'?' fab':'')+'" data-v="'+t[0]+'"'+(on?' aria-current="page"':'')+'><span class="ti">'+I(NAVI[t[0]])+(t[0]==='req'?badge():'')+'</span><span class="tl">'+t[1]+'</span></button>'}).join('')+'</nav>'}
 function badge(){return S.pend.length?'<span class="bdg">'+S.pend.length+'</span>':''}
 function regLink(){return location.origin+'/?c='+encodeURIComponent(S.me.slug||'')}
-function linkCard(){if(S.me.role==='owner')return'';return'<div class="card"><h2>🔗 رابط تسجيل لاعبيك</h2><p class="muted">ابعث هذا الرابط للاعبين في WhatsApp أو Instagram. اللاعبون اللي يسجلوا منه يتضافوا لقائمتك أنت فقط، وما يشوفوش لوحة المدرب.</p><input class="link" id="rl" readonly value="'+esc(regLink())+'"><button class="btn" id="copyRl">نسخ رابط التسجيل</button><button class="btn sec" id="shRl">مشاركة الرابط</button></div>'}
-function statusCard(){var l=S.players.filter(function(p){return p.source==='link'});return(S.pend.length?'<button class="tile" data-go="req" style="width:100%;margin-bottom:12px;border-color:#b58900"><i>⏳</i><b>طلبات تسجيل في انتظار موافقتك: '+S.pend.length+'</b><span>افتح لقبول أو رفض الطلبات</span></button>':'')+'<button class="tile" data-go="req" style="width:100%;margin-bottom:16px"><i>📥</i><b>سجّلوا عبر الرابط: '+l.length+'</b><span>'+(l.length?'آخر تسجيل: '+fmt(new Date(l[0].ts).toISOString().slice(0,10)):'ما فماش تسجيلات بعد')+'</span></button>'}
+function linkCard(){if(S.me.role==='owner')return'';return'<div class="card"><h2>'+I('link')+'رابط تسجيل لاعبيك</h2><p class="muted">ابعث هذا الرابط للاعبين في WhatsApp أو Instagram. اللاعبون اللي يسجلوا منه يتضافوا لقائمتك أنت فقط، وما يشوفوش لوحة المدرب.</p><input class="link" id="rl" readonly value="'+esc(regLink())+'"><button class="btn" id="copyRl">نسخ رابط التسجيل</button><button class="btn sec" id="shRl">مشاركة الرابط</button></div>'}
+function statusCard(){var l=S.players.filter(function(p){return p.source==='link'});return(S.pend.length?'<button class="tile wide warn" data-go="req"><i>'+I('clock')+'</i><div><b>طلبات تسجيل في انتظار موافقتك: '+S.pend.length+'</b><span>افتح لقبول أو رفض الطلبات</span></div></button>':'')+'<button class="tile wide" data-go="req"><i>'+I('inbox')+'</i><div><b>سجّلوا عبر الرابط: '+l.length+'</b><span>'+(l.length?'آخر تسجيل: '+fmt(new Date(l[0].ts).toISOString().slice(0,10)):'ما فماش تسجيلات بعد')+'</span></div></button>'}
 function homeV(){
 var last=S.evals.slice().sort(function(a,b){return b.ts-a.ts}).slice(0,3);
 return statusCard()+'<div class="card"><h2>إدارة الفريق</h2><div class="grid2">'+
-'<button class="tile" data-go="players"><i>👥</i><b>اللاعبون</b><span>'+S.players.length+' لاعب</span></button>'+
-'<button class="tile" data-go="eval"><i>📋</i><b>تقييم سريع</b><span style="direction:ltr;display:block">Kyorugi / Poomsae / Freestyle</span></button>'+
-'<button class="tile" data-go="prog"><i>📈</i><b>التطور</b><span>تاريخ ومقارنة</span></button>'+
-'<button class="tile" data-go="backup"><i>📊</i><b>Excel</b><span>تصدير اللاعبين والتقييمات</span></button></div></div>'+
+'<button class="tile" data-go="players"><i>'+I('users')+'</i><b>اللاعبون</b><span>'+S.players.length+' لاعب</span></button>'+
+'<button class="tile" data-go="eval"><i>'+I('eval')+'</i><b>تقييم سريع</b><span style="direction:ltr;display:block">Kyorugi / Poomsae / Freestyle</span></button>'+
+'<button class="tile" data-go="prog"><i>'+I('trend')+'</i><b>التطور</b><span>تاريخ ومقارنة</span></button>'+
+'<button class="tile" data-go="backup"><i>'+I('sheet')+'</i><b>Excel</b><span>تصدير اللاعبين والتقييمات</span></button></div></div>'+
 linkCard()+athCard()+
 '<div class="card"><h2>آخر التقييمات</h2>'+(last.length?last.map(evItem).join(''):'<p class="muted">ابدأ بإضافة لاعب ثم سجّل أول تقييم.</p>')+'</div>'+
 '<div class="card"><h2>طريقة العمل</h2><ol><li>ابعث رابط التسجيل للاعبين (أو أضفهم بنفسك).</li><li>حمّل ملف Excel في أي وقت، دايمًا محدّث.</li><li>اختر لاعب ونوع التقييم وحرّك المؤشرات.</li><li>المجموع يتحدّث آليًا حسب نوع التقييم ويتحفظ في قاعدة البيانات.</li></ol></div>'}
-function evItem(e){var v=C.describe(e,VIEW);return'<div class="item"><div class="top"><div><b>'+esc(pname(e.pid))+'</b><div><span class="tag">'+esc(STAGES[e.stage])+'</span><span class="tag">'+esc(C.modeTitle(v.mode))+(v.legacy?' · قديم':'')+'</span><span class="tag">'+fmt(e.date)+'</span></div></div><div class="sc">'+v.total+'/'+v.max+'</div></div>'+
-(e.goal?'<p class="muted" style="margin:8px 0 0">🎯 '+esc(e.goal)+'</p>':'')+'</div>'}
+function evItem(e){var v=C.describe(e,VIEW);return'<div class="item"'+beltAttr(beltOf(e.pid))+'><div class="top"><div><b>'+esc(pname(e.pid))+'</b><div><span class="tag">'+esc(STAGES[e.stage])+'</span><span class="tag">'+esc(C.modeTitle(v.mode))+(v.legacy?' · قديم':'')+'</span><span class="tag">'+fmt(e.date)+'</span></div></div><div class="sc">'+v.total+'/'+v.max+'</div></div>'+
+(e.goal?'<p class="muted" style="margin:8px 0 0">'+I('target')+' '+esc(e.goal)+'</p>':'')+'</div>'}
 function newDraft(){return{pid:'',date:today(),stage:'initial',id:'',legacy:false,mode:C.DEFAULT_MODE,r:C.emptyRatings(C.DEFAULT_MODE),nf:N.empty(),by:'المدرب'}}
-function metricRow(m,val){return'<div class="metric"><div class="metric-h"><div>'+V.metricName(m,VIEW)+'</div><span class="n" id="n_'+m.id+'">'+val+'/'+m.max+'</span></div><input type="range" min="'+m.min+'" max="'+m.max+'" step="1" value="'+val+'" data-m="'+m.id+'" aria-label="'+esc(m.title)+'"></div>'}
+function metricRow(m,val){return'<div class="metric"><div class="metric-h"><div>'+V.metricName(m,VIEW)+'</div><span class="n" id="n_'+m.id+'">'+val+'/'+m.max+'</span></div><input type="range" min="'+m.min+'" max="'+m.max+'" step="1" value="'+val+'" style="--p:'+Math.round((val-m.min)/(m.max-m.min)*100)+'%" data-m="'+m.id+'" aria-label="'+esc(m.title)+'"></div>'}
 function notesForm(d){return N.FIELDS.map(function(f){return'<div class="nfield"><label for="nf_'+f.key+'">'+esc(f.label)+'</label>'+(f.athlete?'':'<span class="fhint">خاصة بالمدرب، ما تظهرش للاعب</span>')+'<textarea id="nf_'+f.key+'" maxlength="'+N.MAX_LEN+'" placeholder="'+esc(f.hint)+'">'+esc(d.nf[f.key])+'</textarea></div>'}).join('')}
 function modeOpts(sel,ph){return opts(C.FILTER_MODES.map(function(id){return[id,C.modeTitle(id)]}),sel,ph)}
 function modePicker(d){return'<fieldset class="field"><legend>نوع التقييم</legend><div class="seg two">'+C.MODE_IDS.map(function(id){var i=C.MODE_INFO[id];return'<label><input type="radio" name="e_m" value="'+id+'"'+(d.mode===id?' checked':'')+(d.id?' disabled':'')+'><span>'+esc(i.title)+'<small>'+esc(i.en)+'</small></span></label>'}).join('')+'</div>'+(d.id?'<p class="muted">نوع التقييم ما يتبدّلش بعد الحفظ.</p>':'')+'</fieldset>'}
@@ -61,12 +76,12 @@ h+='<label>اللاعب</label><select id="e_p"'+(d.id?' disabled':'')+'>'+playe
 if(!d.legacy)h+=modePicker(d);
 if(d.legacy){h+='<p class="muted">هذا تقييم قديم (قبل نظام الـ20 معيار). نقاطه ما تتبدّلش، تنجم تعدّل التاريخ والنصوص فقط.</p><div class="item">'+V.groups(d.ev,VIEW)+'</div>'}
 else{var md=C.getMode(d.mode),s=C.scoreRatings(d.r,d.mode);md.categories.forEach(function(cat,i){var cl=C.categoryLabel(cat,VIEW);h+='<section class="cat"><div class="cat-h"><div><h3>'+esc(cl.title)+'</h3>'+(cl.description?'<small>'+esc(cl.description)+'</small>':'')+'</div><span class="n" id="c_'+cat.id+'">'+s.categories[i].score+'/'+cat.max+'</span></div>'+cat.metrics.map(function(m){return metricRow(m,d.r[m.id])}).join('')+'</section>'});
-h+='<div class="total"><div class="muted">المجموع</div><big id="tot">'+s.total+'/'+s.max+'</big><div class="muted" id="totp">'+s.pct+'%</div></div>'}
+h+='<div class="total" style="--p:'+s.pct+'%"><div class="muted">المجموع</div><big id="tot">'+s.total+'/'+s.max+'</big><div class="muted" id="totp">'+s.pct+'%</div></div>'}
 h+=notesForm(d)+
 '<label>اسم من أجرى التقييم</label><select id="e_b">'+opts(['المدرب','المساعد'],d.by)+'</select>'+
 '<button class="btn" id="saveEval">'+(d.id?'حفظ التعديلات':'حفظ التقييم الجديد')+'</button>'+(d.id?'<button class="btn sec" id="cancelEdit">إلغاء</button>':'')+'<p class="muted">كل معيار من '+C.SCALE.min+' إلى '+C.SCALE.max+(md?'، و'+md.metrics.length+' معيار = '+md.max:'')+'. استعمل نفس طريقة التنقيط في كل مرة للمقارنة العادلة.</p></div>';
 return h}
-function refresh(d){var md=C.getMode(d.mode),s=C.scoreRatings(d.r,d.mode);s.categories.forEach(function(x){var el=$('c_'+x.id);if(el)el.textContent=x.score+'/'+x.max});md.metrics.forEach(function(m){var el=$('n_'+m.id);if(el)el.textContent=d.r[m.id]+'/'+m.max});$('tot').textContent=s.total+'/'+s.max;$('totp').textContent=s.pct+'%'}
+function refresh(d){var md=C.getMode(d.mode),s=C.scoreRatings(d.r,d.mode);s.categories.forEach(function(x){var el=$('c_'+x.id);if(el)el.textContent=x.score+'/'+x.max});md.metrics.forEach(function(m){var el=$('n_'+m.id);if(el)el.textContent=d.r[m.id]+'/'+m.max});$('tot').textContent=s.total+'/'+s.max;$('totp').textContent=s.pct+'%';var tp=$('tot').parentNode;if(tp&&tp.style&&tp.style.setProperty)tp.style.setProperty('--p',s.pct+'%')}
 function sum(d){return d.legacy?0:C.scoreRatings(d.r,d.mode).total}
 function logV(){
 var l=S.evals.filter(function(e){return(!logF.p||e.pid===logF.p)&&(!logF.m||C.modeOf(e)===logF.m)}).sort(function(a,b){return b.ts-a.ts});
@@ -91,14 +106,14 @@ if(!/^(?:\+216|00216)?[2-9]\d{7}$/.test(f.phone.replace(/[\s.-]/g,''))){toast('�
 function syncCat(){var d=$('r_d'),c=$('r_c'),h=$('r_ch');if(!d||!c||!h)return;var a=AGE.assess(d.value);if(d.value&&a.ok){c.value=a.category;c.disabled=true;h.textContent=AGE.describe(a)}else{c.disabled=false;h.textContent=d.value?a.message:''}}
 function regV(){return'<div class="card"><h2>إضافة لاعب</h2><p class="muted">تسجيل مباشر من المدرب: اللاعب يتحفظ في قاعدة البيانات ويدخل في ملف Excel.</p>'+formFields()+'<button class="btn" id="addPlayer">إضافة اللاعب</button></div>'}
 function reqV(){var l=S.players.filter(function(p){return p.source==='link'});
-return pendCard()+'<div class="card"><h2>التسجيلات عبر الرابط ('+l.length+')</h2><p class="muted">اللاعب يسجّل من الرابط، وبعد ما تقبله يتضاف هنا. اللي ترفضو ما يتسجّلش.</p><a class="btn" href="/admin/export.xlsx">⬇ تحميل ملف Excel</a></div>'+
+return pendCard()+'<div class="card"><h2>التسجيلات عبر الرابط ('+l.length+')</h2><p class="muted">اللاعب يسجّل من الرابط، وبعد ما تقبله يتضاف هنا. اللي ترفضو ما يتسجّلش.</p><a class="btn" href="/admin/export.xlsx">'+I('download')+' تحميل ملف Excel</a></div>'+
 linkCard()+athCard()+
-'<div class="card"><h2>آخر التسجيلات</h2>'+(l.length?l.map(function(p){return'<div class="item"><div class="top"><b>'+esc(p.name)+'</b><span class="muted">'+fmt(new Date(p.ts).toISOString().slice(0,10))+'</span></div><div>'+tags(p)+'</div><p class="muted link" style="margin:6px 0 0">'+esc(p.phone)+'</p></div>'}).join(''):'<p class="muted">ما فماش تسجيلات بعد. ابعث الرابط للاعبين.</p>')+'</div>'}
-function athCard(){var n=S.players.filter(function(p){return p.hasPw}).length;return'<div class="card"><h2>🔑 دخول اللاعبين لتقييماتهم</h2><p class="muted">كل لاعب يدخل برقم هاتفه وكلمة سر خاصة به، ويشوف تقييماته هو فقط. عندهم كلمة سر: '+n+' من '+S.players.length+'.</p><input class="link" readonly value="'+esc(location.origin+'/athlete')+'"><button class="btn" id="bulkPw">توليد كلمات السر للّي ما عندهمش</button></div>'}
+'<div class="card"><h2>آخر التسجيلات</h2>'+(l.length?l.map(function(p){return'<div class="item"'+beltAttr(p.belt)+'><div class="top"><b>'+esc(p.name)+'</b><span class="muted">'+fmt(new Date(p.ts).toISOString().slice(0,10))+'</span></div><div>'+tags(p)+'</div><p class="muted link" style="margin:6px 0 0">'+esc(p.phone)+'</p></div>'}).join(''):'<p class="muted">ما فماش تسجيلات بعد. ابعث الرابط للاعبين.</p>')+'</div>'}
+function athCard(){var n=S.players.filter(function(p){return p.hasPw}).length;return'<div class="card"><h2>'+I('key')+'دخول اللاعبين لتقييماتهم</h2><p class="muted">كل لاعب يدخل برقم هاتفه وكلمة سر خاصة به، ويشوف تقييماته هو فقط. عندهم كلمة سر: '+n+' من '+S.players.length+'.</p><input class="link" readonly value="'+esc(location.origin+'/athlete')+'"><button class="btn" id="bulkPw">توليد كلمات السر للّي ما عندهمش</button></div>'}
 function waLink(c){var d=String(c.phone).replace(/\D/g,''),t='مرحبا '+c.name+'، هذا دخولك لمتابعة تقييماتك في فريق التايكوندو:\nالرابط: '+location.origin+'/athlete\nرقم الهاتف: '+d.slice(-8)+'\nكلمة السر: '+c.password;return'https://wa.me/'+d+'?text='+encodeURIComponent(t)}
 function credsV(){return'<div class="card"><h2>كلمات السر ('+creds.length+')</h2><p class="muted">⚠ كلمة السر تظهر مرة وحدة فقط. انسخها أو ابعثها للاعب الآن. إذا ضاعت تنجم تولّد وحدة جديدة.</p><button class="btn" id="copyCreds">نسخ الكل</button><button class="btn sec" id="csvCreds">تحميل CSV</button></div>'+creds.map(function(c){return'<div class="item"><div class="top"><b>'+esc(c.name)+'</b><a class="btn sm" href="'+esc(waLink(c))+'" target="_blank" rel="noopener">واتساب</a></div><p class="muted link" style="margin:6px 0 0">'+esc(c.phone)+'</p><p class="link" style="margin:4px 0 0;font-size:22px;font-weight:800;letter-spacing:2px">'+esc(c.password)+'</p></div>'}).join('')}
 function editPV(){var p=S.players.filter(function(x){return x.id===editId})[0];if(!p)return playersV();return'<div class="card"><h2>تعديل: '+esc(p.name)+'</h2>'+formFields(p)+'<button class="btn" id="saveP">حفظ التعديلات</button><button class="btn sec" id="cancelP">إلغاء</button></div>'}
-function playersV(){return'<div class="card"><h2>اللاعبون ('+S.players.length+')</h2><a class="btn sec" href="/admin/export.xlsx" style="margin:0 0 14px">⬇ تحميل Excel</a>'+(S.players.length?S.players.map(function(p){return'<div class="item"><div class="top"><div><b>'+esc(p.name)+'</b><div>'+tags(p)+'</div><p class="muted link" style="margin:6px 0 0">'+esc(p.phone)+(p.hasPw?' 🔑':' (بلا كلمة سر)')+'</p></div></div><div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn sm sec" data-ep="'+esc(p.id)+'">تعديل</button><button class="btn sm sec" data-pw="'+esc(p.id)+'">كلمة سر</button><button class="btn sm red" data-dp="'+esc(p.id)+'">حذف</button></div></div>'}).join(''):'<p class="muted">لا يوجد لاعبون بعد.</p>')+'</div>'}
+function playersV(){return'<div class="card"><h2>اللاعبون ('+S.players.length+')</h2><a class="btn sec" href="/admin/export.xlsx" style="margin:0 0 14px">'+I('download')+' تحميل Excel</a>'+(S.players.length?S.players.map(function(p){return'<div class="item"'+beltAttr(p.belt)+'><div class="top"><div><b>'+esc(p.name)+'</b><div>'+tags(p)+'</div><p class="muted link" style="margin:6px 0 0">'+esc(p.phone)+(p.hasPw?'':' (بلا كلمة سر)')+'</p></div></div><div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn sm sec" data-ep="'+esc(p.id)+'">تعديل</button><button class="btn sm sec" data-pw="'+esc(p.id)+'">كلمة سر</button><button class="btn sm red" data-dp="'+esc(p.id)+'">حذف</button></div></div>'}).join(''):'<p class="muted">لا يوجد لاعبون بعد.</p>')+'</div>'}
 function coachMsg(c){return'مرحبا '+c.name+'، هذا حسابك كمدرب في تطبيق فريق التايكوندو:\nرابط الدخول: '+location.origin+'/coach\nاسم المستخدم: '+c.username+'\nكلمة السر: '+c.password+'\nرابط تسجيل لاعبيك: '+location.origin+'/?c='+c.slug+'\nغيّر كلمة السر من تبويب «حسابي» بعد أول دخول.'}
 function coachWa(c){return'https://wa.me/'+String(c.phone||'').replace(/\D/g,'')+'?text='+encodeURIComponent(coachMsg(c))}
 function coachesV(){
@@ -120,16 +135,16 @@ var n=vs.filter(function(v){return!v.legacy});
 if(n.length>1)h+='<h3 style="margin:18px 0 8px">التطور حسب الفئة</h3>'+n[0].groups.map(function(g,i){var x=n[n.length-1].groups[i].pct-g.pct;return'<div class="gv-i"><span>'+esc(g.title)+'</span><b class="'+(x>=0?'up':'down')+'" style="direction:ltr">'+(x>0?'+':'')+x+'%</b></div>'}).join('');
 h+=l.map(function(e,i){return'<div class="item"><div class="top"><span>'+fmt(e.date)+' · '+esc(STAGES[e.stage])+'</span><span class="sc">'+vs[i].total+'/'+vs[i].max+'</span></div><div class="bar"><i style="width:'+vs[i].pct+'%"></i></div></div>'}).join('')}}
 return h+'</div>'}
-function backupV(){return'<div class="card"><h2>تصدير Excel</h2><p class="muted">الملف يتولّد من قاعدة البيانات في كل مرة، فيه ورقتين: اللاعبون والتقييمات.</p><a class="btn" href="/admin/export.xlsx">⬇ تحميل ملف Excel</a></div>'}
-function loginV(){return'<div class="head"><div><h1>TKD_2026 🥋</h1><small>COACH LOGIN</small></div></div><div class="card"><h2>دخول المدرب</h2><p class="muted">سجّل دخولك بحسابك الخاص.</p><label>اسم المستخدم</label><input id="lu" class="link" dir="ltr" autocomplete="username" autocapitalize="none" autocorrect="off"><label>كلمة السر</label><input id="lk" type="password" class="link" dir="ltr" autocomplete="current-password"><button class="btn" id="lg">دخول</button></div>'}
+function backupV(){return'<div class="card"><h2>تصدير Excel</h2><p class="muted">الملف يتولّد من قاعدة البيانات في كل مرة، فيه ورقتين: اللاعبون والتقييمات.</p><a class="btn" href="/admin/export.xlsx">'+I('download')+' تحميل ملف Excel</a></div>'}
+function loginV(){return'<div class="head"><div class="brand">'+mark()+'<div><h1>TKD 2026</h1><small>دخول المدربين</small></div></div></div><div class="card"><h2>دخول المدرب</h2><p class="muted">سجّل دخولك بحسابك الخاص.</p><label>اسم المستخدم</label><input id="lu" class="link" dir="ltr" autocomplete="username" autocapitalize="none" autocorrect="off"><label>كلمة السر</label><input id="lk" type="password" class="link" dir="ltr" autocomplete="current-password"><button class="btn" id="lg">دخول</button></div>'}
 
 /* ---------- Coach Approval Gate: pending-registration pop-up ----------
  * S.pend comes from /api/admin/data (first load) and /api/admin/registrations (polled every 15s while the tab is visible).
  * The modal lives in #pmodal, outside #app, so polling never wipes a form the coach is typing in. */
 var snoozed={},busy='',denyArm='',modalSig='',modalId='',polling=false,pollTimer=null;
 function nextPending(){return S.pend.filter(function(r){return!snoozed[r.id]})[0]}
-function pendItem(r){return'<div class="item"><div class="top"><b>'+esc(r.name)+'</b><span class="muted">'+fmt(new Date(r.ts).toISOString().slice(0,10))+'</span></div><div>'+tags(r)+'</div><p class="muted link" style="margin:6px 0 0">'+esc(r.phone)+'</p><div style="display:flex;gap:8px;margin-top:10px"><button class="btn sm ok" data-qa="'+esc(r.id)+'">قبول</button><button class="btn sm red" data-qd="'+esc(r.id)+'">رفض</button></div></div>'}
-function pendCard(){return S.pend.length?'<div class="card"><h2>⏳ في انتظار موافقتك ('+S.pend.length+')</h2><p class="muted">ما يدخلوش لقائمة اللاعبين إلا بعد القبول.</p>'+S.pend.map(pendItem).join('')+'</div>':''}
+function pendItem(r){return'<div class="item"'+beltAttr(r.belt)+'><div class="top"><b>'+esc(r.name)+'</b><span class="muted">'+fmt(new Date(r.ts).toISOString().slice(0,10))+'</span></div><div>'+tags(r)+'</div><p class="muted link" style="margin:6px 0 0">'+esc(r.phone)+'</p><div style="display:flex;gap:8px;margin-top:10px"><button class="btn sm ok" data-qa="'+esc(r.id)+'">قبول</button><button class="btn sm red" data-qd="'+esc(r.id)+'">رفض</button></div></div>'}
+function pendCard(){return S.pend.length?'<div class="card"><h2>'+I('clock')+'في انتظار موافقتك ('+S.pend.length+')</h2><p class="muted">ما يدخلوش لقائمة اللاعبين إلا بعد القبول.</p>'+S.pend.map(pendItem).join('')+'</div>':''}
 function row(k,v){return'<dt>'+k+'</dt><dd>'+v+'</dd>'}
 function modalHtml(r){var cl=AGE.label(r.cat),isBusy=busy===r.id,armed=denyArm===r.id;
 return'<div class="pm-box" role="dialog" aria-modal="true" aria-labelledby="pm_t"><div class="pm-top"><h2 id="pm_t">طلب تسجيل جديد</h2><span class="pm-count">'+(S.pend.indexOf(r)+1)+' من '+S.pend.length+'</span></div>'+
@@ -137,12 +152,12 @@ return'<div class="pm-box" role="dialog" aria-modal="true" aria-labelledby="pm_t
 row('الجنس',esc(lab(GENS,r.gender)))+
 row('تاريخ الميلاد',r.dob?esc(fmt(r.dob))+(r.age!=null?' ('+r.age+' سنة)':''):'—')+
 row('الفئة',cl?esc(cl.ar)+' <span class="muted">('+esc(cl.en)+')</span>':esc(r.cat||'—'))+
-row('الوزن',esc(r.weight)+' kg')+row('الحزام',esc(lab(BELTS,r.belt)))+row('الاختصاص',esc(lab(SPECS,r.spec)))+row('الولاية',esc(lab(REG,r.region)))+
+row('الوزن',esc(r.weight)+' kg')+row('الحزام',beltChip(r.belt,lab(BELTS,r.belt)))+row('الاختصاص',esc(lab(SPECS,r.spec)))+row('الولاية',esc(lab(REG,r.region)))+
 row('الهاتف','<span class="link">'+esc(r.phone)+'</span>')+(S.me.role==='owner'?row('المدرب',esc(r.coachName||'—')):'')+'</dl>'+
 '<div class="pm-actions"><button class="btn ok" data-pa="accept"'+(isBusy?' disabled':'')+'>قبول (Accept)</button><button class="btn red'+(armed?' arm':'')+'" data-pa="deny"'+(isBusy?' disabled':'')+'>'+(armed?'تأكيد الرفض':'رفض (Deny)')+'</button></div>'+
 '<button class="pm-later" data-pa="later"'+(isBusy?' disabled':'')+'>لاحقًا</button></div>'}
 function hideModal(){var pm=$('pmodal');pm.hidden=true;pm.innerHTML='';modalSig='';modalId='';app.removeAttribute('inert')}
-function paintBadge(){Array.prototype.forEach.call(app.querySelectorAll('.tab[data-v="req"]'),function(b){b.innerHTML='التسجيلات'+badge()})}
+function paintBadge(){Array.prototype.forEach.call(app.querySelectorAll('.tab[data-v="req"]'),function(b){b.innerHTML='<span class="ti">'+I('inbox')+badge()+'</span><span class="tl">التسجيلات</span>'})}
 function syncModal(){
 paintBadge();
 var r=authed?nextPending():null;if(!r){hideModal();return}
@@ -180,12 +195,15 @@ function render(){
 if(loading){app.innerHTML='<p class="muted" style="text-align:center;margin-top:35vh">…</p>';return}
 if(!authed){hideModal();app.innerHTML=loginV();var lg=$('lg'),lk=$('lk');var doLogin=function(){lg.disabled=true;api('POST','/api/admin/login',{username:$('lu').value,password:lk.value}).then(reload).then(render).catch(function(e){lg.disabled=false;toast(errMsg(e))})};lg.onclick=doLogin;lk.onkeydown=function(e){if(e.key==='Enter')doLogin()};return}
 var v={home:homeV,eval:evalV,log:logV,reg:regV,req:reqV,players:playersV,prog:progV,backup:backupV,editP:editPV,creds:credsV,coaches:coachesV,acct:acctV}[view]||homeV;
-app.innerHTML=header()+tabs()+v();bind();syncModal()}
+app.innerHTML=header()+tabs()+v();bind();syncModal();var on=app.querySelector&&app.querySelector('.tab.on');if(on&&on.scrollIntoView)on.scrollIntoView({inline:'center',block:'nearest'})}
 function bind(){
 var q=function(s,f){Array.prototype.forEach.call(app.querySelectorAll(s),f)};
 q('.tab',function(b){b.onclick=function(){go(b.dataset.v)}});
 q('[data-go]',function(b){b.onclick=function(){go(b.dataset.go)}});
-var lo=$('logout');if(lo)lo.onclick=function(){api('POST','/api/admin/logout').then(function(){authed=false;S.players=[];S.evals=[];S.coaches=[];view='home';draft=null;render()})};
+var doOut=function(){api('POST','/api/admin/logout').then(function(){authed=false;S.players=[];S.evals=[];S.coaches=[];view='home';draft=null;render()})};
+['logout','logout2','switchAcc'].forEach(function(id){var b=$(id);if(b)b.onclick=doOut});
+var ab=$('acctBtn'),am=$('acctMenu');if(ab&&am)ab.onclick=function(e){if(e&&e.stopPropagation)e.stopPropagation();am.hidden=!am.hidden;ab.setAttribute('aria-expanded',String(!am.hidden))};
+if(!menuBound){menuBound=true;document.addEventListener('click',function(e){var m=$('acctMenu'),t=e&&e.target;if(m&&!m.hidden&&!(t&&t.closest&&t.closest('#acctMenu')))m.hidden=true})}
 var cr=$('copyRl');if(cr)cr.onclick=function(){var i=$('rl');i.select();var ok=false;try{ok=document.execCommand('copy')}catch(e){}
 if(navigator.clipboard)navigator.clipboard.writeText(i.value).then(function(){toast('تم نسخ الرابط ✓')},function(){toast(ok?'تم نسخ الرابط ✓':'انسخ الرابط يدويًا')});else toast(ok?'تم نسخ الرابط ✓':'انسخ الرابط يدويًا')};
 var sh=$('shRl');if(sh)sh.onclick=function(){var u=regLink(),t='سجّل معلوماتك في فريق التايكوندو من هنا:';if(navigator.share)navigator.share({text:t,url:u}).catch(function(){});else window.open('https://wa.me/?text='+encodeURIComponent(t+' '+u),'_blank','noopener')};
@@ -194,7 +212,7 @@ var d=draft;
 $('e_p').onchange=function(){d.pid=this.value};$('e_s').onchange=function(){d.stage=this.value};$('e_d').onchange=function(){d.date=this.value};
 N.FIELDS.forEach(function(f){$('nf_'+f.key).oninput=function(){d.nf[f.key]=this.value}});$('e_b').onchange=function(){d.by=this.value};
 q('input[name=e_m]',function(r){r.onchange=function(){if(d.mode===r.value)return;if(sum(d)>0&&!confirm('تبديل نوع التقييم يمسح النقاط المدخلة. تكمل؟')){render();return}d.mode=r.value;d.r=C.emptyRatings(d.mode);render()}});
-q('input[type=range]',function(r){r.oninput=function(){d.r[r.dataset.m]=+r.value;refresh(d)}});
+q('input[type=range]',function(r){r.oninput=function(){d.r[r.dataset.m]=+r.value;if(r.style&&r.style.setProperty)r.style.setProperty('--p',Math.round((r.value-r.min)/(r.max-r.min)*100)+'%');refresh(d)}});
 var ce=$('cancelEdit');if(ce)ce.onclick=function(){draft=null;go('log')};
 $('saveEval').onclick=function(){if(!d.pid){toast('اختر لاعبًا أولًا');return}if(!d.date){toast('اختر التاريخ');return}
 if(!d.legacy&&sum(d)===0&&!confirm('المجموع 0. تحب تحفظ كيما هو؟'))return;

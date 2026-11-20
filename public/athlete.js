@@ -9,26 +9,28 @@
     return fetch(u, { method: m, credentials: 'same-origin', headers: b ? { 'Content-Type': 'application/json' } : {}, body: b ? JSON.stringify(b) : undefined })
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) { var e = new Error(j.message || 'صار مشكل، عاود المحاولة'); e.status = r.status; throw e; } return j; }); });
   }
+  var mark = function () { return typeof TKD_MARK === 'function' ? TKD_MARK(true) : ''; };
   function tag(t) { return '<span class="tag">' + esc(t) + '</span>'; }
   function loginV() {
-    return '<div class="head"><div><h1>TKD_2026 🥋</h1><small>ATHLETE LOGIN</small></div></div><div class="card"><h2>دخول اللاعب</h2><p class="muted">اكتب رقم هاتفك وكلمة السر اللي عطاك إياها المدرب.</p>' +
+    return '<div class="head"><div class="brand">' + mark() + '<div><h1>TKD 2026</h1><small>بوابة اللاعب</small></div></div></div><div class="card"><h2>دخول اللاعب</h2><p class="muted">اكتب رقم هاتفك وكلمة السر اللي عطاك إياها المدرب.</p>' +
       '<label>رقم الهاتف</label><input id="ph" type="tel" inputmode="tel" dir="ltr" autocomplete="username" placeholder="22 123 456">' +
       '<label>كلمة السر</label><input id="pw" type="password" dir="ltr" autocomplete="current-password" autocapitalize="none" autocorrect="off">' +
       '<button class="btn" id="go">دخول</button><p id="status" role="alert"></p></div>';
   }
+  var beltKey = '';
   function evCard(e) {
     var v = C.describe(e, VIEW);
-    return '<div class="item"><div class="top"><div><b>' + esc(e.stage) + '</b><div><span class="tag">' + esc(C.modeTitle(v.mode)) + (v.legacy ? ' · قديم' : '') + '</span><span class="tag">' + fmt(e.date) + '</span></div></div><div class="sc">' + v.total + '/' + v.max + '</div></div>' +
+    return '<div class="item"' + (beltKey ? ' data-belt="' + esc(beltKey) + '"' : '') + '><div class="top"><div><b>' + esc(e.stage) + '</b><div><span class="tag">' + esc(C.modeTitle(v.mode)) + (v.legacy ? ' · قديم' : '') + '</span><span class="tag">' + fmt(e.date) + '</span></div></div><div class="sc">' + v.total + '/' + v.max + '</div></div>' +
       '<div class="bar"><i style="width:' + v.pct + '%"></i></div>' + V.groups(e, VIEW) +
       V.notes(N.fromApi(e), VIEW) + '</div>'; // only the fields an athlete may see (never الملاحظات)
   }
   function dash() {
-    var a = data.athlete, ev = data.evaluations;
-    var h = '<div class="head"><div><h1>أهلا ' + esc(a.firstName) + ' 🥋</h1><small>TKD_2026 • ATHLETE</small></div><button class="pill" id="out">خروج</button></div>';
-    h += '<div class="card">' + tag(a.category) + tag(a.weight + ' kg') + tag(a.belt) + tag(a.specialty) + tag(a.region) + (a.coach ? '<p class="muted" style="margin:10px 0 0">مدربك: <b>' + esc(a.coach) + '</b></p>' : '') + '</div>';
+    var a = data.athlete, ev = data.evaluations; beltKey = a.beltKey || '';
+    var h = '<div class="head"><div class="brand">' + mark() + '<div><h1>أهلا ' + esc(a.firstName) + '</h1><small>TKD 2026</small></div></div><div class="acct"><button class="ib" id="out" aria-label="تسجيل الخروج" title="تسجيل الخروج">' + (typeof TKD_ICON === 'function' ? TKD_ICON('logout') : 'خروج') + '</button></div></div>';
+    h += '<div class="card">' + (typeof TKD_BELT === 'function' && a.beltKey ? TKD_BELT(a.beltKey, a.belt) : tag(a.belt)) + tag(a.category) + tag(a.weight + ' kg') + tag(a.specialty) + tag(a.region) + (a.coach ? '<p class="muted" style="margin:10px 0 0">مدربك: <b>' + esc(a.coach) + '</b></p>' : '') + '</div>';
     if (!ev.length) return h + '<div class="card"><h2>تقييماتك</h2><p class="muted">ما فماش تقييم بعد. باش يظهرلك هنا على طول بعد ما يسجّلو المدرب.</p></div>' + pwCard();
     var vs = ev.map(function (e) { return C.describe(e, VIEW); }); // newest first
-    h += '<div class="total"><div class="muted">آخر تقييم: ' + fmt(ev[0].date) + '</div><big>' + vs[0].pct + '%</big><div class="muted">' + vs[0].total + '/' + vs[0].max + '</div></div>';
+    h += '<div class="total" style="--p:' + vs[0].pct + '%"><div class="muted">آخر تقييم: ' + fmt(ev[0].date) + '</div><big>' + vs[0].pct + '%</big><div class="muted">' + vs[0].total + '/' + vs[0].max + '</div></div>';
     h += progressCard(vs);
     return h + '<div class="card"><h2>كل تقييماتك</h2>' + ev.map(evCard).join('') + '</div>' + pwCard();
   }

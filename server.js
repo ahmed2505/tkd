@@ -622,7 +622,7 @@ app.get('/api/athlete/me', requireAthlete, async (req, res, next) => {
     const coach = a.coach ? await Coach.findById(a.coach).select('name').lean() : null;
     const evs = await Evaluation.find({ athlete: a._id }).sort({ date: -1, createdAt: -1 }).lean();
     res.json({
-      athlete: { coach: coach ? coach.name : '', firstName: a.firstName, region: ar(REGIONS, a.region), belt: ar(BELTS, a.belt), weight: a.weight, specialty: ar(SPECIALTIES, a.specialty), category: ar(CATEGORIES, categoryOf(a)) },
+      athlete: { coach: coach ? coach.name : '', firstName: a.firstName, region: ar(REGIONS, a.region), belt: ar(BELTS, a.belt), beltKey: a.belt, weight: a.weight, specialty: ar(SPECIALTIES, a.specialty), category: ar(CATEGORIES, categoryOf(a)) },
       // the coach's private notes are never sent to the athlete
       evaluations: evs.map((e) => ({ id: String(e._id), date: e.date, stage: STAGES[e.stage], v: e.v || 1, mode: C.modeOf(e), r: e.ratings || null, sc: e.scores || null, type: e.type || '', total: e.total, ...N.toApi(N.fromDoc(e), C.VIEWS.ATHLETE) }))
     });
